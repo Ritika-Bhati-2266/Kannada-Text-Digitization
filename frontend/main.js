@@ -21,6 +21,7 @@ const state = {
   isTranslating: false,
   isTtsLoading: false,
   isPlayingAudio: false,
+  selectedEngine: '', // '' = Auto (backend default with fallback)
   lastAction: null, // For retry on error / 429
   retryTimer: null,
   activeSample: null
@@ -29,6 +30,7 @@ const state = {
 // DOM Elements
 const elements = {
   // Inputs
+  engineSelector: document.getElementById('engineSelector'),
   fileUploadInput: document.getElementById('fileUploadInput'),
   cameraUploadInput: document.getElementById('cameraUploadInput'),
   uploadBtn: document.getElementById('uploadBtn'),
@@ -187,6 +189,14 @@ function bindEvents() {
     });
   });
 
+  // OCR Engine Override Selector
+  elements.engineSelector.addEventListener('change', () => {
+    state.selectedEngine = elements.engineSelector.value;
+    showToast(state.selectedEngine
+      ? `OCR engine override: ${state.selectedEngine.toUpperCase()}`
+      : 'OCR engine: Auto (backend default with fallback)');
+  });
+
   // Image Zoom Controls
   elements.zoomInBtn.addEventListener('click', () => adjustZoom(0.2));
   elements.zoomOutBtn.addEventListener('click', () => adjustZoom(-0.2));
@@ -238,9 +248,13 @@ function bindEvents() {
 // ==============================================================================
 // 3. File & Sample Handling
 // ==============================================================================
+function isPdfFile(file) {
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+}
+
 function handleFileSelection(file) {
-  if (!file.type.startsWith('image/')) {
-    showGeneralError('ಅಮಾನ್ಯ ಕಡತ / Invalid File', 'Please select a valid image file (PNG, JPG, or WEBP).');
+  if (!file.type.startsWith('image/') && !isPdfFile(file)) {
+    showGeneralError('ಅಮಾನ್ಯ ಕಡತ / Invalid File', 'Please select a valid image file (PNG, JPG, WEBP) or a PDF document.');
     return;
   }
 
@@ -252,12 +266,16 @@ function handleFileSelection(file) {
   // Unset active sample badge
   elements.samplePills.forEach(p => p.classList.remove('active'));
 
-  // Display image preview
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    showPreviewImage(e.target.result);
-  };
-  reader.readAsDataURL(file);
+  if (isPdfFile(file)) {
+    showPdfPreview();
+  } else {
+    // Display image preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      showPreviewImage(e.target.result);
+    };
+    reader.readAsDataURL(file);
+  }
 
   // Trigger OCR extraction
   triggerOcrExtraction(file);
@@ -299,19 +317,40 @@ function showPreviewImage(src) {
   setZoom(1.0);
 }
 
+function showPdfPreview() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="420" height="560" viewBox="0 0 420 560">
+    <rect width="420" height="560" rx="18" fill="#1a233b"/>
+    <rect x="90" y="70" width="240" height="320" rx="10" fill="#f5f6fa" stroke="#c62828" stroke-width="3"/>
+    <text x="210" y="250" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="46" font-weight="700" fill="#c62828">PDF</text>
+    <text x="210" y="300" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="15" fill="#5a6472">Multi-page document</text>
+    <text x="210" y="440" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="14" fill="#ffb300">Pages will be rendered &amp; OCR'd</text>
+  </svg>`;
+  elements.uploadDropzone.style.display = 'none';
+  elements.previewImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  elements.previewImage.style.display = 'block';
+  elements.zoomControls.style.display = 'none';
+}
+
 // ==============================================================================
 // 4. OCR Extraction Engine Integration
 // ==============================================================================
 async function triggerOcrExtraction(file) {
   state.isOcrLoading = true;
   state.lastAction = () => triggerOcrExtraction(file);
-  showOcrLoading('ಕನ್ನಡ ಲಿಪಿ ಹೊರತೆಗೆಯಲಾಗುತ್ತಿದೆ...', `Transcribing with ${state.activeEngine.toUpperCase()} vision AI...`);
+  const loadingSub = isPdfFile(file)
+    ? 'Rendering PDF pages & extracting Kannada text...'
+    : `Transcribing with ${state.activeEngine.toUpperCase()} vision AI...`;
+  showOcrLoading('ಕನ್ನಡ ಲಿಪಿ ಹೊರತೆಗೆಯಲಾಗುತ್ತಿದೆ...', loadingSub);
 
   const formData = new FormData();
   formData.append('file', file);
 
+  const ocrUrl = state.selectedEngine
+    ? `${API_BASE_URL}/api/ocr?engine=${encodeURIComponent(state.selectedEngine)}`
+    : `${API_BASE_URL}/api/ocr`;
+
   try {
-    const res = await fetch(`${API_BASE_URL}/api/ocr`, {
+    const res = await fetch(ocrUrl, {
       method: 'POST',
       body: formData
     });
@@ -351,7 +390,9 @@ async function triggerOcrExtraction(file) {
       elements.scriptWarningBanner.style.display = 'none';
     }
 
-    showToast('ಲಿಪಿ ಯಶಸ್ವಿಯಾಗಿ ಹೊರತೆಗೆಯಲಾಗಿದೆ (OCR Complete)');
+    showToast(data.page_count
+      ? `PDF OCR Complete — ${data.pages_processed}/${data.page_count} pages transcribed`
+      : 'ಲಿಪಿ ಯಶಸ್ವಿಯಾಗಿ ಹೊರತೆಗೆಯಲಾಗಿದೆ (OCR Complete)');
 
     // Reset translation panel for new document
     elements.translationContent.style.display = 'none';
@@ -452,7 +493,11 @@ async function requestTranslation(targetLang) {
     const res = await fetch(`${API_BASE_URL}/api/translate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, target_lang: targetLang })
+      body: JSON.stringify({
+        text,
+        target_lang: targetLang,
+        engine: state.selectedEngine || null
+      })
     });
 
     const data = await res.json();
@@ -548,7 +593,12 @@ async function streamBackendTTS(text) {
       body: JSON.stringify({ text: text.slice(0, 2500) })
     });
 
-    if (!res.ok) throw new Error(`TTS server error (${res.status})`);
+    if (!res.ok) {
+      if (res.status === 429) {
+        throw new Error('Speech service is rate-limited right now — wait a few seconds and try Read Aloud again.');
+      }
+      throw new Error(`TTS server error (${res.status})`);
+    }
 
     const blob = await res.blob();
     const audioUrl = URL.createObjectURL(blob);

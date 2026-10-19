@@ -34,6 +34,14 @@
     </div>
 
     <div class="header-actions">
+      <!-- OCR Engine Override Selector -->
+      <select id="engineSelector" class="engine-selector" title="OCR engine — Auto uses the backend default with automatic fallback">
+        <option value="">Auto (default)</option>
+        <option value="gemini">Gemini</option>
+        <option value="groq">Groq</option>
+        <option value="tesseract">Tesseract (offline)</option>
+      </select>
+
       <!-- Active Backend Engine Badge -->
       <div class="engine-badge" id="engineStatusBadge" title="Backend Engine Status">
         <span class="status-dot"></span>
@@ -107,7 +115,7 @@
   <section class="control-ribbon" aria-label="Input options">
     <div class="input-actions-group">
       <!-- Hidden File & Camera Inputs -->
-      <input type="file" id="fileUploadInput" accept="image/png,image/jpeg,image/webp,image/bmp" style="display: none;">
+      <input type="file" id="fileUploadInput" accept="image/png,image/jpeg,image/webp,image/bmp,application/pdf" style="display: none;">
       <input type="file" id="cameraUploadInput" accept="image/*" capture="environment" style="display: none;">
 
       <!-- Upload Button -->
@@ -141,6 +149,10 @@
         <button class="sample-pill" id="sample3Btn" data-filename="sample_textbook.png" data-title="ಪಠ್ಯಪುಸ್ತಕ ಸಾಹಿತ್ಯ ವಿಭಾಗ (Textbook)">
           <span class="sample-tag">SAMPLE (generated)</span>
           <span class="sample-name">3. ಪಠ್ಯಪುಸ್ತಕ ಸಾಹಿತ್ಯ (Textbook)</span>
+        </button>
+        <button class="sample-pill" id="sample4Btn" data-filename="sample_handwriting.png" data-title="ಕೈ ಬರಹ ಪತ್ರ (Handwritten note)">
+          <span class="sample-tag">SAMPLE (simulated handwriting)</span>
+          <span class="sample-name">4. ಕೈ ಬರಹ (Handwriting)</span>
         </button>
       </div>
     </div>
@@ -182,6 +194,7 @@
             <span>PNG</span>
             <span>JPG / JPEG</span>
             <span>WEBP</span>
+            <span>PDF (multi-page)</span>
           </div>
         </div>
 

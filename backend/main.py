@@ -9,8 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from gtts import gTTS
 from dotenv import load_dotenv
+import pypdfium2 as pdfium
 
-from ocr_service import ocr_manager
+from ocr_service import ocr_manager, analyze_script_distribution, count_words_and_chars
 
 load_dotenv()
 
@@ -66,20 +67,46 @@ def health_check():
         "engines": all_status
     }
 
+MAX_PDF_PAGES = 10
+PDF_RENDER_SCALE = 2.0
+
+
+def _is_pdf(file: UploadFile, filename: str) -> bool:
+    return (file.content_type or "").lower() == "application/pdf" or filename.lower().endswith(".pdf")
+
+
+def _render_pdf_to_images(contents: bytes, max_pages: int = MAX_PDF_PAGES):
+    """Render PDF pages to PNG image bytes. Returns (pages, total_page_count)."""
+    pdf = pdfium.PdfDocument(contents)
+    try:
+        total = len(pdf)
+        pages = []
+        for i in range(min(total, max_pages)):
+            bitmap = pdf[i].render(scale=PDF_RENDER_SCALE)
+            pil_image = bitmap.to_pil().convert("RGB")
+            buf = io.BytesIO()
+            pil_image.save(buf, format="PNG")
+            pages.append((i + 1, buf.getvalue()))
+        return pages, total
+    finally:
+        pdf.close()
+
+
 @app.post("/api/ocr")
 async def extract_ocr(
     file: UploadFile = File(...),
     engine: Optional[str] = Query(None, description="Optional OCR engine override: gemini | groq | tesseract")
 ):
     """
-    Receives a document image file and extracts Kannada Unicode text
-    using the active or specified OCR engine (gemini, groq, or tesseract).
+    Receives a document image file (PNG/JPG/WEBP/BMP) OR a multi-page PDF
+    and extracts Kannada Unicode text using the active or specified OCR engine.
+    PDFs are rendered page-by-page (up to 10 pages) and transcribed with page markers.
     """
-    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff"]
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff", "application/pdf"]
     if file.content_type and file.content_type.lower() not in allowed_types:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type '{file.content_type}'. Please upload a PNG, JPG, or WEBP image."
+            detail=f"Unsupported file type '{file.content_type}'. Please upload a PNG, JPG, WEBP image or a PDF."
         )
 
     try:
@@ -87,10 +114,60 @@ async def extract_ocr(
         if len(contents) == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
         if len(contents) > 15 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Image size exceeds 15MB limit.")
+            raise HTTPException(status_code=400, detail="File size exceeds 15MB limit.")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read image file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
 
+    # ── PDF path: render pages, OCR each, concatenate with page markers ──
+    if _is_pdf(file, file.filename or ""):
+        try:
+            pages, total_pages = _render_pdf_to_images(contents)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read PDF: {str(e)}")
+
+        if not pages:
+            raise HTTPException(status_code=400, detail="PDF contains no readable pages.")
+
+        page_texts = []
+        engine_used = model_used = None
+        warnings = []
+        for page_no, image_bytes in pages:
+            result = ocr_manager.extract_text(image_bytes, engine_name=engine)
+            if not result["success"]:
+                raise HTTPException(
+                    status_code=result.get("status_code", 500),
+                    detail={
+                        "message": f"OCR failed on page {page_no}: {result['error']}",
+                        "engine": result.get("engine"),
+                        "is_rate_limit": result.get("is_rate_limit", False)
+                    }
+                )
+            page_texts.append(f"—— ಪುಟ / Page {page_no} ——\n{result['text']}")
+            engine_used = result.get("engine")
+            model_used = result.get("model_used")
+            if result.get("warning"):
+                warnings.append(f"Page {page_no}: {result['warning']}")
+
+        combined_text = "\n\n".join(page_texts)
+        word_count, char_count = count_words_and_chars(combined_text)
+        script_stats = analyze_script_distribution(combined_text)
+
+        return {
+            "filename": file.filename,
+            "text": combined_text,
+            "word_count": word_count,
+            "char_count": char_count,
+            "engine_used": engine_used,
+            "model_used": model_used,
+            "warning": warnings[0] if warnings else None,
+            "script_stats": script_stats,
+            "page_count": total_pages,
+            "pages_processed": len(pages)
+        }
+
+    # ── Single-image path ──
     result = ocr_manager.extract_text(contents, engine_name=engine)
 
     if not result["success"]:

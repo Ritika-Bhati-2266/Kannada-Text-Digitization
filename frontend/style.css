@@ -141,6 +141,30 @@ body {
   box-shadow: 0 0 8px #10b981;
 }
 
+.engine-selector {
+  padding: 0.4rem 0.7rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.engine-selector:hover,
+.engine-selector:focus {
+  border-color: var(--border-active);
+  outline: none;
+}
+
+.engine-selector option {
+  background: var(--bg-secondary);
+  color: var(--text-main);
+}
+
 /* ==============================================================================
    2. Buttons & Controls
    ============================================================================== */
