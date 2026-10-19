@@ -188,10 +188,10 @@ footer(s, 3)
 s = blank_slide(prs)
 header(s, "How Our Solution Is Different")
 items = [
-    ("Engine-agnostic core", "One OCR Manager routes to Gemini, Groq or fully-offline Tesseract — swap engines by config or per request. No vendor lock-in, no dead end when a quota runs out."),
+    ("Engine-agnostic core", "One OCR Manager routes to Gemini, Groq or fully-offline Tesseract — pick via the header dropdown or Auto. If an engine isn't ready, it auto-falls back. No lock-in, no dead end when a quota runs out."),
     ("Script-distribution validation", "Post-extraction Unicode analysis (Kannada / Devanagari / Latin shares) with an automatic targeted retry — catches silent failures traditional OCR never detects."),
-    ("Understand + hear, not just extract", "One-click translation to English/Hindi and authentic Kannada text-to-speech (browser voice + gTTS fallback) — accessible to non-readers & the visually impaired."),
-    ("Searchable from second one", "In-text search with live highlighting, editable transcription, copy / TXT export / print-to-PDF — a workstation, not a text box."),
+    ("Images, PDFs & handwriting", "Upload, drag-drop, camera capture or multi-page PDF (page-wise OCR with per-page markers); plus a handwriting sample — covering every input type PS-05 names."),
+    ("Understand + hear, not just extract", "One-click translation to English/Hindi and authentic Kannada text-to-speech — plus in-text search, editable text, copy / TXT / print-to-PDF. Accessible to non-readers & the visually impaired."),
 ]
 y = Inches(1.6)
 for i, (t, d) in enumerate(items, 1):
@@ -206,9 +206,9 @@ footer(s, 4)
 s = blank_slide(prs)
 header(s, "Approach — Methodology & Workflow")
 steps_top = [
-    ("Image input\nupload · camera · sample", NAVY),
+    ("Input\nimage · camera · PDF · handwriting", NAVY),
     ("FastAPI\n/api/ocr endpoint", DARK),
-    ("UnifiedOCRManager\nengine selection", RED),
+    ("UnifiedOCRManager\nengine + auto-fallback", RED),
     ("Vision / OCR engine\ngemini | groq | tesseract", TEAL),
 ]
 x = Inches(0.55)
@@ -261,7 +261,7 @@ header(s, "Architecture — Components & Data Flow")
 box(s, Inches(0.9), Inches(1.6), Inches(11.5), Inches(1.15), fill=LIGHT, line=NAVY, text="", size=12)
 textbox(s, Inches(1.1), Inches(1.68), Inches(11), Inches(0.35), ["Browser — Split-view UI"], size=15, color=NAVY, bold=True)
 textbox(s, Inches(1.1), Inches(2.05), Inches(11), Inches(0.6),
-        ["document image | editable Kannada text · search+highlight · translate · TTS · copy · TXT · print/PDF"],
+        ["image upload | camera capture | multi-page PDF (page-wise) | handwriting  →  edit · search · translate · TTS · export"],
         size=12, color=DARK)
 down_arrow(s, Inches(6.5), Inches(2.85), h=Inches(0.35))
 textbox(s, Inches(6.9), Inches(2.88), Inches(3.5), Inches(0.3), ["REST: /api/ocr · /api/translate · /api/tts"], size=11, color=GREY)
@@ -286,6 +286,7 @@ header(s, "Conclusion & Future Scope")
 textbox(s, Inches(0.6), Inches(1.65), Inches(12.1), Inches(0.5), ["Impact"], size=20, color=RED, bold=True)
 textbox(s, Inches(0.6), Inches(2.2), Inches(12.1), Inches(1.8), [
     "Any Kannada document image becomes text you can search, edit, hear, translate and share",
+    "Handles images, multi-page PDFs and handwriting — every input type PS-05 asks for",
     "Validation layer delivers trustworthy output where traditional OCR silently fails",
     "Engine-agnostic core runs on free LLM quotas today — or fully offline for zero-cost deployments",
     "Directly fulfils PS-05: searchable digital text + easier to understand and access",

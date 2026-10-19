@@ -28,13 +28,21 @@
 
 > This is **Kannada Lipi Mitra** — a Kannada Document AI with **engine-agnostic OCR**.
 >
-> **[Demo 1 — Instant demo, 25s]** One click on a built-in sample — a department circular. Watch: image loads on the left, extracted **clean Kannada Unicode** appears on the right. The header badge shows which engine ran — here, Gemini.
+> **[Demo 1 — Instant demo, 25s]** One click on a built-in sample — a department circular. Watch: image loads on the left, extracted **clean Kannada Unicode** appears on the right. The header badge shows which engine ran — here, Groq.
 >
-> **[Demo 2 — Real camera capture, 30s]** Now a real-world test: I'll photograph a Kannada notice with the camera button — no file transfer, straight from phone to OCR. And notice the in-text search: type a word, every match highlights instantly with a counter. The transcription pane is fully **editable**, and you can copy it, export a `.txt`, or print a formatted digital copy as PDF.
+> **[Demo 2 — Camera capture & in-text search, 25s]** Now a real-world test: I'll photograph a Kannada notice with the camera button — no file transfer, straight from phone to OCR. And notice the in-text search: type a word, every match highlights instantly with a counter. The transcription pane is fully **editable** — copy it, export a `.txt`, or print a formatted digital copy as PDF.
 >
-> **[Demo 3 — Understand & hear, 30s]** Extraction isn't the finish line. One click translates the full text to **English** — or **Hindi**. Then **Read Aloud**: if the browser has no Kannada voice, our backend streams authentic Kannada speech via gTTS. This is what makes documents accessible to someone who *cannot read* Kannada script.
+> **[Demo 3 — Multi-page PDF, 20s]** Most scanned archives are PDFs, so let me drop in a two-page circular. It renders each page and OCRs them in sequence, returning the full text with **per-page markers** — so you know exactly which page a line came from.
 >
-> **[Approach, 25s]** Under the hood, a **UnifiedOCRManager** routes each image to Gemini, Groq, or fully-offline Tesseract — configured by env var or overridden per request, so a quota limit never blocks the user. After extraction, we measure the **Unicode script distribution** — if the model slipped into Devanagari or English, a targeted retry prompt fires automatically. That validation loop is the reliability layer traditional OCR completely lacks.
+> **[Demo 4 — Handwriting, 20s]** PS-05 also names handwritten material. Here's a handwritten-style note — the engine extracts its Kannada text, making even hand-written content searchable.
+>
+> **[Demo 5 — Engine selector, 15s]** Watch the header dropdown: I can force Gemini, Groq, or fully-offline Tesseract. If an engine isn't configured or its quota runs out, the manager **auto-falls back** to a ready one — the user is never blocked.
+>
+> **[Demo 6 — Understand & hear, 25s]** Extraction isn't the finish line. One click translates the full text to **English** — or **Hindi**. Then **Read Aloud**: if the browser has no Kannada voice, our backend streams authentic Kannada speech via gTTS. This is what makes documents accessible to someone who *cannot read* Kannada script.
+>
+> **[Approach & tech stack, 45s]** Under the hood, a **UnifiedOCRManager** routes each image or PDF page to Gemini, Groq, or fully-offline Tesseract, then measures the **Unicode script distribution** — if the model slips into Devanagari or English, a targeted retry fires automatically. That validation loop is the reliability layer traditional OCR lacks.
+>
+> **Tech stack:** a lightweight vanilla-JS frontend served by a **Python FastAPI** backend, deployed as **one service** on Render straight from `render.yaml`. The same service hosts the API and the UI — one URL, zero CORS pain.
 
 **Screen:** the live app throughout; briefly flash the `ocr_service.py` engine-classes and the script-validation function.
 
