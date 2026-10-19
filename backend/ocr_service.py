@@ -4,7 +4,7 @@ import re
 import base64
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from PIL import Image
 from dotenv import load_dotenv
 import httpx
@@ -790,12 +790,39 @@ class UnifiedOCRManager:
         """Returns readiness and configuration status for every engine."""
         return {name: eng.check_ready() for name, eng in self.engines.items()}
 
+    def _resolve_engine(self, engine_name: Optional[str], for_translation: bool = False) -> Tuple[BaseOCREngine, Optional[str]]:
+        """Resolve the engine to use. If the preferred engine is not ready,
+        automatically fall back to any other ready engine (Tesseract cannot translate)."""
+        preferred = self.get_engine(engine_name)
+        preferred_name = preferred.engine_name
+        preferred_status = preferred.check_ready()
+        if preferred_status.get("ready"):
+            return preferred, None
+
+        for name, eng in self.engines.items():
+            if eng is preferred:
+                continue
+            if for_translation and name == "tesseract":
+                continue
+            if eng.check_ready().get("ready"):
+                warning = (
+                    f"Engine '{preferred_name}' is not ready "
+                    f"({preferred_status.get('error', 'not configured')}). "
+                    f"Automatically switched to '{name}'."
+                )
+                return eng, warning
+        return preferred, None
+
     def extract_text(self, image_bytes: bytes, engine_name: Optional[str] = None) -> Dict[str, Any]:
-        engine = self.get_engine(engine_name)
-        return engine.extract_text(image_bytes)
+        engine, fallback_warning = self._resolve_engine(engine_name)
+        result = engine.extract_text(image_bytes)
+        if fallback_warning:
+            existing = result.get("warning")
+            result["warning"] = f"{existing} {fallback_warning}" if existing else fallback_warning
+        return result
 
     def translate_text(self, kannada_text: str, target_lang: str, engine_name: Optional[str] = None) -> Dict[str, Any]:
-        engine = self.get_engine(engine_name)
+        engine, _ = self._resolve_engine(engine_name, for_translation=True)
         return engine.translate_text(kannada_text, target_lang)
 
     def check_ready(self, engine_name: Optional[str] = None) -> Dict[str, Any]:
