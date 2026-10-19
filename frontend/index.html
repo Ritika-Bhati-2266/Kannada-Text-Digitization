@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="kn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — Kannada Lipi Mitra | Kannada Document AI & OCR</title>
+  <meta name="description" content="ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — Engine-Agnostic Kannada Document AI, High-Fidelity OCR, Meaning & Speech Synthesis">
+  
+  <!-- Google Fonts: Inter & Noto Sans Kannada -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Kannada:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- Print-Only Document Header -->
+  <header class="print-header" id="printHeader" style="display: none;">
+    <div class="print-header-top">
+      <h2>ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — ಡಿಜಿಟಲ್ ಪ್ರತಿ (Digital Document Transcription)</h2>
+      <span class="print-date" id="printTimestamp"></span>
+    </div>
+    <div class="print-meta" id="printMetaInfo"></div>
+  </header>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-icon">ಕ</div>
+      <div>
+        <h1 class="brand-title">ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ</h1>
+        <p class="brand-subtitle">Kannada Lipi Mitra — Kannada Document AI & High-Fidelity OCR</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <!-- Active Backend Engine Badge -->
+      <div class="engine-badge" id="engineStatusBadge" title="Backend Engine Status">
+        <span class="status-dot"></span>
+        <span id="engineBadgeText">Checking Engine...</span>
+      </div>
+
+      <!-- Quick Action: Print / PDF -->
+      <button class="btn btn-secondary print-btn" id="printPdfBtn" title="Print or save as PDF">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+        <span>Print / PDF</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Dedicated Error / 429 Alert Banner Area -->
+  <section class="alerts-container" id="alertsContainer" aria-live="polite">
+    <!-- 429 Rate Limit Banner -->
+    <div class="alert-banner alert-rate-limit" id="rateLimitBanner" style="display: none;">
+      <div class="alert-content">
+        <div class="alert-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="alert-text">
+          <strong>ದರ ಮಿತಿ ತಲುಪಿದೆ / Rate Limit Exceeded:</strong>
+          <span id="rateLimitMsg">API quota reached. Please wait a few seconds before retrying.</span>
+          <span class="retry-countdown" id="retryCountdown"></span>
+        </div>
+      </div>
+      <div class="alert-actions">
+        <button class="btn btn-warning btn-sm" id="rateLimitRetryBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Retry Now
+        </button>
+      </div>
+    </div>
+
+    <!-- Generic Error Banner -->
+    <div class="alert-banner alert-error" id="generalErrorBanner" style="display: none;">
+      <div class="alert-content">
+        <div class="alert-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="alert-text">
+          <strong id="generalErrorTitle">OCR Processing Error:</strong>
+          <span id="generalErrorMsg">An unexpected error occurred.</span>
+        </div>
+      </div>
+      <div class="alert-actions">
+        <button class="btn btn-outline btn-sm" id="errorDismissBtn">Dismiss</button>
+        <button class="btn btn-primary btn-sm" id="errorRetryBtn">Retry</button>
+      </div>
+    </div>
+    <!-- Script Validation Warning Banner -->
+    <div class="alert-banner alert-warning" id="scriptWarningBanner" style="display: none;">
+      <div class="alert-content">
+        <div class="alert-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div class="alert-text">
+          <strong id="scriptWarningTitle">ಲಿಪಿ ಎಚ್ಚರಿಕೆ / Script Validation:</strong>
+          <span id="scriptWarningMsg"></span>
+        </div>
+      </div>
+      <div class="alert-actions">
+        <button class="btn btn-outline btn-sm" id="scriptWarningDismissBtn">Dismiss</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Input Ribbon: Upload, Camera & Sample Document Picker -->
+  <section class="control-ribbon" aria-label="Input options">
+    <div class="input-actions-group">
+      <!-- Hidden File & Camera Inputs -->
+      <input type="file" id="fileUploadInput" accept="image/png,image/jpeg,image/webp,image/bmp" style="display: none;">
+      <input type="file" id="cameraUploadInput" accept="image/*" capture="environment" style="display: none;">
+
+      <!-- Upload Button -->
+      <button class="btn btn-primary" id="uploadBtn" title="Upload document image from your device">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>Upload Document</span>
+      </button>
+
+      <!-- Camera Capture Button (<input capture>) -->
+      <button class="btn btn-secondary" id="cameraBtn" title="Capture Kannada document using camera">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <span>Take Photo (Camera)</span>
+      </button>
+    </div>
+
+    <!-- SAMPLE Document Quick Picker -->
+    <div class="samples-picker-group">
+      <span class="picker-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Sample Documents:
+      </span>
+      <div class="sample-pills" role="radiogroup" aria-label="Select sample document">
+        <button class="sample-pill" id="sample1Btn" data-filename="sample_circular.png" data-title="ಶಿಕ್ಷಣ ಇಲಾಖೆ ಸುತ್ತೋಲೆ (Circular)">
+          <span class="sample-tag">SAMPLE (generated)</span>
+          <span class="sample-name">1. ಶಿಕ್ಷಣ ಇಲಾಖೆ ಸುತ್ತೋಲೆ (Circular)</span>
+        </button>
+        <button class="sample-pill" id="sample2Btn" data-filename="sample_notice.png" data-title="ಸಾರ್ವಜನಿಕ ಪ್ರಕಟಣೆ (Public Notice)">
+          <span class="sample-tag">SAMPLE (generated)</span>
+          <span class="sample-name">2. ಸಾರ್ವಜನಿಕ ಪ್ರಕಟಣೆ (Notice)</span>
+        </button>
+        <button class="sample-pill" id="sample3Btn" data-filename="sample_textbook.png" data-title="ಪಠ್ಯಪುಸ್ತಕ ಸಾಹಿತ್ಯ ವಿಭಾಗ (Textbook)">
+          <span class="sample-tag">SAMPLE (generated)</span>
+          <span class="sample-name">3. ಪಠ್ಯಪುಸ್ತಕ ಸಾಹಿತ್ಯ (Textbook)</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Split-View Workstation -->
+  <main class="workstation-container" id="workstation">
+    <!-- LEFT PANE: Document Image Viewport -->
+    <section class="split-pane pane-left" aria-label="Document Image Preview">
+      <div class="pane-header">
+        <div class="pane-title-group">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span class="pane-title" id="imageDocName">ಮೂಲ ದಾಖಲೆ / Original Document</span>
+        </div>
+
+        <div class="zoom-controls" id="zoomControls" style="display: none;">
+          <button class="icon-btn" id="zoomOutBtn" title="Zoom Out (–)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
+          <span class="zoom-level" id="zoomLevelDisplay">100%</span>
+          <button class="icon-btn" id="zoomInBtn" title="Zoom In (+)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
+          <button class="icon-btn" id="zoomResetBtn" title="Reset Zoom">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="image-viewport" id="imageViewport">
+        <!-- Interactive Drop Zone Placeholder -->
+        <div class="upload-dropzone" id="uploadDropzone">
+          <div class="dropzone-icon">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          </div>
+          <h3>ದಾಖಲೆಯನ್ನು ಇಲ್ಲಿ ಎಳೆಯಿರಿ ಮತ್ತು ಬಿಡಿ</h3>
+          <p>Drag and drop a Kannada document here, or choose an option above</p>
+          <div class="dropzone-pills">
+            <span>PNG</span>
+            <span>JPG / JPEG</span>
+            <span>WEBP</span>
+          </div>
+        </div>
+
+        <!-- Rendered Document Image -->
+        <img id="previewImage" class="document-img" alt="Uploaded Kannada Document" style="display: none;">
+
+        <!-- Loading Overlay for Image Pane -->
+        <div class="pane-loading" id="ocrLoadingOverlay" style="display: none;">
+          <div class="spinner"></div>
+          <div class="loading-text">
+            <h4 id="loadingStepTitle">ಕನ್ನಡ ಲಿಪಿ ಹೊರತೆಗೆಯಲಾಗುತ್ತಿದೆ...</h4>
+            <p id="loadingStepSub">Transcribing Kannada script with Groq AI vision model...</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANE: Extracted Kannada Unicode Text Editor -->
+    <section class="split-pane pane-right" aria-label="Extracted Kannada Text">
+      <div class="pane-header">
+        <div class="pane-title-group">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          <span class="pane-title">ಕನ್ನಡ ಲಿಪಿ ಪ್ರತಿ (Editable Kannada Text)</span>
+        </div>
+
+        <!-- In-Text Search Bar with Match Counter -->
+        <div class="in-text-search-container">
+          <div class="search-input-wrapper">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="inTextSearchInput" placeholder="ಪಠ್ಯ ಹುಡುಕಿ / Search in text..." aria-label="Search inside extracted Kannada text">
+            <button class="clear-search-btn" id="clearSearchBtn" title="Clear Search" style="display: none;">✕</button>
+          </div>
+          <span class="search-match-count" id="searchMatchCount">0 matches</span>
+        </div>
+      </div>
+
+      <!-- Editor Content Area with Search Highlight Layer -->
+      <div class="editor-wrapper" id="editorWrapper">
+        <!-- Highlight Backdrop for Search Matches -->
+        <div class="search-backdrop noto-kannada" id="searchBackdrop" aria-hidden="true"></div>
+        
+        <!-- Editable Text Area -->
+        <textarea 
+          id="kannadaEditor" 
+          class="kannada-textarea noto-kannada" 
+          placeholder="ಹೊರತೆಗೆದ ಕನ್ನಡ ಪಠ್ಯ ಇಲ್ಲಿ ಕಾಣಿಸುತ್ತದೆ... (Extracted Kannada Unicode text will appear here. You can freely edit or copy it.)" 
+          spellcheck="false"
+          aria-label="Extracted Kannada Unicode Text Editor"
+        ></textarea>
+      </div>
+
+      <!-- Editor Metadata Bar (Word count, Char count, Engine info) -->
+      <div class="editor-meta-bar">
+        <div class="meta-stat">
+          <span class="meta-label">ಪದಗಳು (Words):</span>
+          <span class="meta-value" id="wordCountDisplay">0</span>
+        </div>
+        <div class="meta-stat">
+          <span class="meta-label">ಅಕ್ಷರಗಳು (Chars):</span>
+          <span class="meta-value" id="charCountDisplay">0</span>
+        </div>
+        <div class="meta-stat" id="engineUsedStat" style="display: none;">
+          <span class="meta-label">ಎಂಜಿನ್:</span>
+          <span class="meta-value" id="engineUsedDisplay">—</span>
+        </div>
+      </div>
+
+      <!-- Action Suite: Read Aloud, Copy, Export TXT -->
+      <div class="action-suite">
+        <!-- Read Aloud (TTS) Button -->
+        <button class="btn btn-accent action-btn" id="readAloudBtn" title="Listen to Kannada text spoken aloud">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+          <span id="readAloudBtnText">ಓದಿ ಕೇಳಿ (Read Aloud)</span>
+        </button>
+
+        <!-- Copy to Clipboard -->
+        <button class="btn btn-secondary action-btn" id="copyTextBtn" title="Copy Kannada text to clipboard">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>ಪ್ರತಿಮಾಡು (Copy)</span>
+        </button>
+
+        <!-- TXT Export -->
+        <button class="btn btn-secondary action-btn" id="exportTxtBtn" title="Download text as UTF-8 .txt file">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>TXT ಡೌನ್‌ಲೋಡ್</span>
+        </button>
+      </div>
+
+      <!-- TTS Audio Player Bar (Shown when audio is generated or playing) -->
+      <div class="tts-player-bar" id="ttsPlayerBar" style="display: none;">
+        <audio id="ttsAudioElement" preload="none"></audio>
+        <div class="audio-controls">
+          <button class="play-pause-btn" id="ttsPlayPauseBtn" aria-label="Play or pause audio">
+            <svg id="playIcon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <svg id="pauseIcon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display: none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          </button>
+          <div class="audio-progress-container">
+            <div class="audio-progress-bar" id="audioProgressBar"></div>
+          </div>
+          <span class="audio-time" id="audioTimeDisplay">0:00 / 0:00</span>
+          <span class="audio-mode-badge" id="audioModeBadge">Kannada gTTS Voice</span>
+        </div>
+      </div>
+
+      <!-- Meaning / Translation on Demand Panel -->
+      <section class="translation-panel" aria-label="Meaning and Translation">
+        <div class="translation-header">
+          <span class="translation-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            ಅರ್ಥ / Translation (Meaning on Demand)
+          </span>
+
+          <div class="translation-btn-group">
+            <button class="btn btn-outline btn-sm translate-trigger-btn" id="translateEnBtn" data-lang="en">
+              English Meaning
+            </button>
+            <button class="btn btn-outline btn-sm translate-trigger-btn" id="translateHiBtn" data-lang="hi">
+              हिन्दी Meaning
+            </button>
+          </div>
+        </div>
+
+        <!-- Translation Output Container -->
+        <div class="translation-content" id="translationContent" style="display: none;">
+          <div class="translation-meta">
+            <span class="lang-tag" id="translationLangTag">English</span>
+            <button class="icon-btn-text" id="copyTranslationBtn" title="Copy translation">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <span>Copy</span>
+            </button>
+          </div>
+          <div class="translation-box" id="translationOutputText"></div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toastNotification" role="alert" aria-live="assertive">
+    <span id="toastMessage">ಪಠ್ಯ ನಕಲಿಸಲಾಗಿದೆ (Copied to clipboard)</span>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
