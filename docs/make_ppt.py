@@ -132,6 +132,7 @@ textbox(s, Inches(1), Inches(3.8), Inches(11.3), Inches(1.6), [
     "Problem Statement 05 · Kannada Text Digitization",
 ], size=17, color=WHITE, align=PP_ALIGN.CENTER)
 textbox(s, Inches(1), Inches(5.6), Inches(11.3), Inches(1.0), [
+    "Participant: Ritika Bhati · github.com/Ritika-Bhati-2266/Kannada-Text-Digitization",
     "Kannada Digital Innovation Hackathon 2026 · Theme: Code. Create. Celebrate Kannada.",
     "Organized by HackerRank Campus Crew & The National Institute of Engineering (NIE), Mysuru",
 ], size=13, color=RGBColor(0xB8, 0xC0, 0xD0), align=PP_ALIGN.CENTER)

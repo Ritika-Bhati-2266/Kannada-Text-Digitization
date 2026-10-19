@@ -24,7 +24,7 @@
 
 **Screen:** side-by-side — a Tesseract garbled output sample vs. the real document; a pricing/quota page.
 
-## 1:30 – 3:30 · Our Solution — Live Demo & Approach
+## 1:30 – 3:40 · Our Solution — Live Demo
 
 > This is **Kannada Lipi Mitra** — a Kannada Document AI with **engine-agnostic OCR**.
 >
@@ -39,15 +39,13 @@
 > **[Demo 5 — Engine selector, 15s]** Watch the header dropdown: I can force Gemini, Groq, or fully-offline Tesseract. If an engine isn't configured or its quota runs out, the manager **auto-falls back** to a ready one — the user is never blocked.
 >
 > **[Demo 6 — Understand & hear, 25s]** Extraction isn't the finish line. One click translates the full text to **English** — or **Hindi**. Then **Read Aloud**: if the browser has no Kannada voice, our backend streams authentic Kannada speech via gTTS. This is what makes documents accessible to someone who *cannot read* Kannada script.
->
-> **[Approach & tech stack, 45s]** Under the hood, a **UnifiedOCRManager** routes each image or PDF page to Gemini, Groq, or fully-offline Tesseract, then measures the **Unicode script distribution** — if the model slips into Devanagari or English, a targeted retry fires automatically. That validation loop is the reliability layer traditional OCR lacks.
->
-> **Tech stack:** a lightweight vanilla-JS frontend served by a **Python FastAPI** backend, deployed as **one service** on Render straight from `render.yaml`. The same service hosts the API and the UI — one URL, zero CORS pain.
 
 **Screen:** the live app throughout; briefly flash the `ocr_service.py` engine-classes and the script-validation function.
 
-## 3:30 – 4:30 · Tech Stack & Architecture
+## 3:40 – 4:30 · Approach, Tech Stack & Architecture
 
+> **[Approach, 25s]** Under the hood, a **UnifiedOCRManager** routes each image or PDF page to Gemini, Groq, or fully-offline Tesseract, then measures the **Unicode script distribution** — if the model slips into Devanagari or English, a targeted retry fires automatically. That validation loop is the reliability layer traditional OCR lacks.
+>
 > **Tech stack:** the frontend is lightweight vanilla JS with Vite, served by a **Python FastAPI** backend. OCR runs on **Gemini 2.0 Flash**, **Groq vision LLMs**, or **Tesseract + OpenCV** offline. Translation is LLM-based; speech uses the browser's native voice with a **gTTS** server fallback.
 >
 > **Architecture:** the browser's split-view UI talks to one REST API — `/api/ocr`, `/api/translate`, `/api/tts`. The FastAPI app hands images to the OCR manager, which selects an engine, validates the script, and returns structured JSON. The same service serves the built frontend — so the whole product is **one URL, zero CORS pain**, deployed on Render straight from `render.yaml`.
@@ -56,9 +54,9 @@
 
 ## 4:30 – 5:00 · Conclusion
 
-> **Kannada Lipi Mitra** turns any Kannada document image into text you can **search, edit, understand, hear, translate and share** — addressing PS-05 end to end, with a validation layer that traditional OCR lacks and an engine-agnostic core that never locks you in.
+> **Kannada Lipi Mitra** turns any Kannada document — photo, scan, **PDF** or **handwriting** — into text you can **search, edit, understand, hear, translate and share** — addressing PS-05 end to end, with a validation layer that traditional OCR lacks and an engine-agnostic core that never locks you in.
 >
-> Future scope: batch PDF ingestion, offline handwriting fine-tuning, and transliteration.
+> Future scope: bulk archive ingestion beyond 10 pages per PDF, offline handwriting fine-tuning, and transliteration.
 >
 > Code, live demo and this submission are built for the **Kannada Digital Innovation Hackathon 2026** — *Code. Create. Celebrate Kannada.* ಧನ್ಯವಾದಗಳು!
 

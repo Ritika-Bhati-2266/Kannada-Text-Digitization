@@ -5,9 +5,11 @@ services:
     name: kannada-lipi-mitra
     runtime: python
     plan: free
+    # Tesseract + Kannada data is a bonus offline engine; install is non-fatal
+    # so the service still deploys (Groq/Gemini) if apt packages are unavailable.
     buildCommand: >
       sudo apt-get update -qq &&
-      sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-kann &&
+      (sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-kann || echo "tesseract install skipped") &&
       pip install -r backend/requirements.txt
     startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
