@@ -1,20 +1,24 @@
-
-# Secrets
+# Environment & secrets — never commit
 .env
 .env.*
 !.env.example
+.venv/
+venv/
 
 # Python
 __pycache__/
 *.py[cod]
-.venv/
-venv/
+.pytest_cache/
 
 # Node
 node_modules/
 
-# Build output
-# frontend/dist/
+# Build output — backend serves the plain frontend/ files directly,
+# so the Vite dist/ build is not needed in the repo (and Render has no Node runtime).
+frontend/dist/
 
-# Local files
+# OS / editor
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
