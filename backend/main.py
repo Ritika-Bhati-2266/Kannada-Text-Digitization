@@ -136,7 +136,7 @@ def _render_pdf_to_images(contents: bytes, max_pages: int = MAX_PDF_PAGES):
 
 
 @app.post("/api/ocr")
-async def extract_ocr(
+def extract_ocr(
     file: UploadFile = File(...),
     engine: Optional[str] = Query(None, description="Optional OCR engine override: groq | tesseract"),
     handwriting: bool = Query(False, description="Enable handwriting-tuned preprocessing & prompts")
@@ -155,7 +155,8 @@ async def extract_ocr(
         )
 
     try:
-        contents = await file.read()
+        # Sync endpoint runs in threadpool — read the underlying file object directly
+        contents = file.file.read()
         if len(contents) == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
         if len(contents) > 15 * 1024 * 1024:
