@@ -402,10 +402,15 @@ async function triggerOcrExtraction(file) {
     ? `${API_BASE_URL}/api/ocr?${queryParams.join('&')}`
     : `${API_BASE_URL}/api/ocr`;
 
+  // Abort if the backend doesn't answer in 60s (Render free tier can hang)
+  const controller = new AbortController();
+  const ocrTimeoutId = setTimeout(() => controller.abort(), 60000);
+
   try {
     const res = await fetch(ocrUrl, {
       method: 'POST',
-      body: formData
+      body: formData,
+      signal: controller.signal
     });
 
     const data = await res.json();
@@ -460,8 +465,13 @@ async function triggerOcrExtraction(file) {
 
   } catch (err) {
     hideOcrLoading();
-    showGeneralError('OCR Extraction Failed', err.message);
+    if (err.name === 'AbortError') {
+      showGeneralError('OCR Timed Out', 'No response in 60s. Retry, or check the Render service logs.');
+    } else {
+      showGeneralError('OCR Extraction Failed', err.message);
+    }
   } finally {
+    clearTimeout(ocrTimeoutId);
     state.isOcrLoading = false;
   }
 }
@@ -548,6 +558,10 @@ async function requestTranslation(targetLang) {
   state.isTranslating = true;
   state.lastAction = () => requestTranslation(targetLang);
 
+  // Abort if the backend doesn't answer in 40s (Render free tier can hang)
+  const controller = new AbortController();
+  const translateTimeoutId = setTimeout(() => controller.abort(), 40000);
+
   try {
     const res = await fetch(`${API_BASE_URL}/api/translate`, {
       method: 'POST',
@@ -556,7 +570,8 @@ async function requestTranslation(targetLang) {
         text,
         target_lang: targetLang,
         engine: state.selectedEngine || null
-      })
+      }),
+      signal: controller.signal
     });
 
     const data = await res.json();
@@ -578,8 +593,13 @@ async function requestTranslation(targetLang) {
     showToast(`${isEn ? 'English' : 'Hindi'} translation ready`);
 
   } catch (err) {
-    showGeneralError('Translation Error', err.message);
+    if (err.name === 'AbortError') {
+      showGeneralError('Translation Timed Out', 'No response in 40s. Retry, or check the Render service logs.');
+    } else {
+      showGeneralError('Translation Error', err.message);
+    }
   } finally {
+    clearTimeout(translateTimeoutId);
     state.isTranslating = false;
     elements.translateEnBtn.textContent = 'English Meaning';
     elements.translateHiBtn.textContent = 'हिन्दी Meaning';

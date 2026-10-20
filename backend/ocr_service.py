@@ -15,6 +15,11 @@ load_dotenv()
 # kan alone mangles Latin/digits (e.g. ED-2026-KN-0492/SAMPLE); kan+eng keeps them.
 TESSERACT_LANG = "kan+eng"
 
+# Hard timeout on every Groq HTTP call (vision OCR + translate) — fail fast
+# instead of hanging the request on slow free-tier responses.
+GROQ_TIMEOUT_SECONDS = 25.0
+GROQ_TIMEOUT_ERROR = f"Groq did not respond in {int(GROQ_TIMEOUT_SECONDS)}s, try again or check the key."
+
 # ==============================================================================
 # Helper Prompts for Kannada OCR & Translation
 # ==============================================================================
@@ -332,6 +337,19 @@ class GroqEngine(BaseOCREngine):
             "base_url": self.base_url
         }
 
+    def _groq_post(self, client, endpoint: str, headers: dict, payload: dict):
+        """POST to Groq; logs elapsed seconds for every call (timeout set on client)."""
+        started = time.monotonic()
+        try:
+            res = client.post(endpoint, headers=headers, json=payload)
+            print(f"[GroqEngine] POST chat/completions -> {res.status_code} "
+                  f"in {time.monotonic() - started:.1f}s")
+            return res
+        except Exception:
+            print(f"[GroqEngine] POST chat/completions failed after "
+                  f"{time.monotonic() - started:.1f}s")
+            raise
+
     def extract_text(self, image_bytes: bytes, handwriting: bool = False) -> Dict[str, Any]:
         ready = self.check_ready()
         if not ready["ready"]:
@@ -393,10 +411,10 @@ class GroqEngine(BaseOCREngine):
         BACKOFF_SECONDS = [5.0, 15.0, 45.0]
         try:
             strip_texts = []
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=GROQ_TIMEOUT_SECONDS) as client:
                 for strip_idx, uri in enumerate(strip_uris):
                     payload = _build_payload(uri)
-                    res = client.post(endpoint, headers=headers, json=payload)
+                    res = self._groq_post(client, endpoint, headers, payload)
                     for attempt in range(len(BACKOFF_SECONDS)):
                         if res.status_code != 429:
                             break
@@ -409,7 +427,7 @@ class GroqEngine(BaseOCREngine):
                         print(f"[GroqEngine] 429 rate limit — backing off {wait_time:.0f}s "
                               f"(attempt {attempt + 1}/{len(BACKOFF_SECONDS)})")
                         time.sleep(wait_time)
-                        res = client.post(endpoint, headers=headers, json=payload)
+                        res = self._groq_post(client, endpoint, headers, payload)
                     if res.status_code != 200:
                         break  # shared error handling below uses `res`
                     data = res.json()
@@ -464,11 +482,11 @@ class GroqEngine(BaseOCREngine):
                     "max_tokens": self.max_tokens
                 }
                 try:
-                    with httpx.Client(timeout=60.0) as client:
-                        retry_res = client.post(endpoint, headers=headers, json=retry_payload)
+                    with httpx.Client(timeout=GROQ_TIMEOUT_SECONDS) as client:
+                        retry_res = self._groq_post(client, endpoint, headers, retry_payload)
                         if retry_res.status_code == 429:
                             time.sleep(5.0)
-                            retry_res = client.post(endpoint, headers=headers, json=retry_payload)
+                            retry_res = self._groq_post(client, endpoint, headers, retry_payload)
                         if retry_res.status_code == 200:
                             retry_data = retry_res.json()
                             retry_raw = retry_data["choices"][0]["message"]["content"]
@@ -514,7 +532,7 @@ class GroqEngine(BaseOCREngine):
         except httpx.TimeoutException:
             return {
                 "success": False,
-                "error": "Groq API request timed out. Please try again.",
+                "error": GROQ_TIMEOUT_ERROR,
                 "status_code": 504,
                 "engine": self.engine_name
             }
@@ -548,11 +566,11 @@ class GroqEngine(BaseOCREngine):
         }
 
         try:
-            with httpx.Client(timeout=45.0) as client:
-                res = client.post(endpoint, headers=headers, json=payload)
+            with httpx.Client(timeout=GROQ_TIMEOUT_SECONDS) as client:
+                res = self._groq_post(client, endpoint, headers, payload)
                 if res.status_code == 429:
                     time.sleep(3.0)
-                    res = client.post(endpoint, headers=headers, json=payload)
+                    res = self._groq_post(client, endpoint, headers, payload)
 
             if res.status_code == 429:
                 return {
@@ -586,6 +604,13 @@ class GroqEngine(BaseOCREngine):
                 "target_lang": target_lang,
                 "engine": self.engine_name,
                 "model_used": self.text_model
+            }
+        except httpx.TimeoutException:
+            return {
+                "success": False,
+                "error": GROQ_TIMEOUT_ERROR,
+                "status_code": 504,
+                "engine": self.engine_name
             }
         except Exception as e:
             return {
