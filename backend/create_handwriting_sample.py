@@ -1,5 +1,5 @@
 """Generate a simulated handwritten Kannada note sample (for the handwriting OCR demo).
-Writes the PNG to backend/test_images/, samples/, and frontend/public/samples/.
+Writes the PNG to samples/ and frontend/public/samples/, plus ground truth samples/<name>.txt.
 """
 import random
 from pathlib import Path
@@ -11,10 +11,10 @@ random.seed(42)
 ROOT = Path(__file__).resolve().parent
 FONT_PATH = ROOT / "fonts" / "NotoSansKannada-Regular.ttf"
 OUT_PATHS = [
-    ROOT / "test_images" / "sample_handwriting.png",
     ROOT.parent / "samples" / "sample_handwriting.png",
     ROOT.parent / "frontend" / "public" / "samples" / "sample_handwriting.png",
 ]
+GROUND_TRUTH_PATH = ROOT.parent / "samples" / "sample_handwriting.txt"
 
 W, H = 1100, 780
 INK = (36, 42, 58)
@@ -78,6 +78,10 @@ def main():
         out.parent.mkdir(parents=True, exist_ok=True)
         paper.save(out, "PNG")
         print(f"Saved: {out}")
+
+    GROUND_TRUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
+    GROUND_TRUTH_PATH.write_text("\n".join(LINES) + "\n", encoding="utf-8")
+    print(f"Saved ground truth: {GROUND_TRUTH_PATH}")
 
 
 if __name__ == "__main__":

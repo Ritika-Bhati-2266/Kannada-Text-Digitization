@@ -15,13 +15,13 @@ const state = {
   currentFile: null,
   currentFileName: '',
   extractedText: '',
-  activeEngine: 'groq',
+  activeEngine: 'tesseract',
   zoomLevel: 1.0,
   isOcrLoading: false,
   isTranslating: false,
   isTtsLoading: false,
   isPlayingAudio: false,
-  selectedEngine: '', // '' = Auto (backend default with fallback)
+  selectedEngine: '', // '' = Auto (backend default: Tesseract)
   lastAction: null, // For retry on error / 429
   retryTimer: null,
   activeSample: null
@@ -49,6 +49,7 @@ const elements = {
   errorRetryBtn: document.getElementById('errorRetryBtn'),
   scriptWarningBanner: document.getElementById('scriptWarningBanner'),
   scriptWarningMsg: document.getElementById('scriptWarningMsg'),
+  scriptWarningTitle: document.getElementById('scriptWarningTitle'),
   scriptWarningDismissBtn: document.getElementById('scriptWarningDismissBtn'),
   engineStatusBadge: document.getElementById('engineStatusBadge'),
   engineBadgeText: document.getElementById('engineBadgeText'),
@@ -126,7 +127,7 @@ async function checkBackendHealth() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     
-    state.activeEngine = data.active_engine || 'groq';
+    state.activeEngine = data.active_engine || 'tesseract';
     const isReady = data.active_engine_ready;
     const model = data.engines?.[state.activeEngine]?.vision_model || state.activeEngine.toUpperCase();
     
@@ -194,7 +195,7 @@ function bindEvents() {
     state.selectedEngine = elements.engineSelector.value;
     showToast(state.selectedEngine
       ? `OCR engine override: ${state.selectedEngine.toUpperCase()}`
-      : 'OCR engine: Auto (backend default with fallback)');
+      : 'OCR engine: Auto (backend default: Tesseract)');
   });
 
   // Image Zoom Controls
@@ -339,7 +340,7 @@ async function triggerOcrExtraction(file) {
   state.lastAction = () => triggerOcrExtraction(file);
   const loadingSub = isPdfFile(file)
     ? 'Rendering PDF pages & extracting Kannada text...'
-    : `Transcribing with ${state.activeEngine.toUpperCase()} vision AI...`;
+    : `Extracting Kannada text with ${state.activeEngine.toUpperCase()}...`;
   showOcrLoading('ಕನ್ನಡ ಲಿಪಿ ಹೊರತೆಗೆಯಲಾಗುತ್ತಿದೆ...', loadingSub);
 
   const formData = new FormData();
@@ -383,8 +384,14 @@ async function triggerOcrExtraction(file) {
 
     syncSearchHighlights();
 
-    if (data.warning) {
-      elements.scriptWarningMsg.textContent = data.warning;
+    // Combine script-validation warnings + AI-vs-Tesseract verification warnings
+    const ocrWarns = [];
+    if (data.warning) ocrWarns.push(data.warning);
+    if (Array.isArray(data.ocr_warnings)) ocrWarns.push(...data.ocr_warnings);
+
+    if (ocrWarns.length) {
+      elements.scriptWarningTitle.textContent = 'ಎಚ್ಚರಿಕೆ / OCR Warning:';
+      elements.scriptWarningMsg.textContent = ocrWarns.join('  ');
       elements.scriptWarningBanner.style.display = 'flex';
     } else {
       elements.scriptWarningBanner.style.display = 'none';

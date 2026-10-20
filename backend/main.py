@@ -36,7 +36,7 @@ app.add_middleware(
 class TranslationRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Kannada text to translate")
     target_lang: str = Field(..., pattern="^(en|hi)$", description="Target language: 'en' or 'hi'")
-    engine: Optional[str] = Field(None, description="Optional engine override: gemini | groq | tesseract")
+    engine: Optional[str] = Field(None, description="Optional engine override: groq | tesseract")
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Kannada text to convert to audio")
@@ -95,7 +95,7 @@ def _render_pdf_to_images(contents: bytes, max_pages: int = MAX_PDF_PAGES):
 @app.post("/api/ocr")
 async def extract_ocr(
     file: UploadFile = File(...),
-    engine: Optional[str] = Query(None, description="Optional OCR engine override: gemini | groq | tesseract")
+    engine: Optional[str] = Query(None, description="Optional OCR engine override: groq | tesseract")
 ):
     """
     Receives a document image file (PNG/JPG/WEBP/BMP) OR a multi-page PDF
@@ -133,6 +133,7 @@ async def extract_ocr(
         page_texts = []
         engine_used = model_used = None
         warnings = []
+        ocr_warnings = []
         for page_no, image_bytes in pages:
             result = ocr_manager.extract_text(image_bytes, engine_name=engine)
             if not result["success"]:
@@ -149,6 +150,9 @@ async def extract_ocr(
             model_used = result.get("model_used")
             if result.get("warning"):
                 warnings.append(f"Page {page_no}: {result['warning']}")
+            for w in (result.get("ocr_warnings") or []):
+                if w not in ocr_warnings:
+                    ocr_warnings.append(w)
 
         combined_text = "\n\n".join(page_texts)
         word_count, char_count = count_words_and_chars(combined_text)
@@ -163,6 +167,7 @@ async def extract_ocr(
             "model_used": model_used,
             "warning": warnings[0] if warnings else None,
             "script_stats": script_stats,
+            "ocr_warnings": ocr_warnings,
             "page_count": total_pages,
             "pages_processed": len(pages)
         }
@@ -189,6 +194,7 @@ async def extract_ocr(
         "engine_used": result.get("engine"),
         "model_used": result.get("model_used"),
         "warning": result.get("warning"),
+        "ocr_warnings": result.get("ocr_warnings") or [],
         "script_stats": result.get("script_stats")
     }
 
@@ -196,7 +202,7 @@ async def extract_ocr(
 def translate_kannada(payload: TranslationRequest):
     """
     On-demand translation of current Kannada text into English ('en') or Hindi ('hi').
-    Uses active engine or specified engine (gemini or groq).
+    Uses active engine or specified engine (tesseract or groq).
     """
     result = ocr_manager.translate_text(payload.text, payload.target_lang, engine_name=payload.engine)
 

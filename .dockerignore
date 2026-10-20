@@ -1,0 +1,32 @@
+# Secrets — never send to the image build context
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# VCS
+.git
+.gitignore
+
+# Python caches / virtualenvs
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node (rebuilt inside the image)
+**/node_modules/
+frontend/dist/
+
+# Local benchmark / test artifacts
+backend/ocr_test_results.json
+backend/test_*.png
+backend/test_*.py
+
+# Docs & deploy config not needed inside the image
+docs/
+render.yaml
+*.md

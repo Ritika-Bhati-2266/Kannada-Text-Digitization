@@ -88,6 +88,16 @@ def draw_mixed_text(draw: ImageDraw.ImageDraw, xy: tuple, text: str, font_kn, fo
         x += (bbox[2] - bbox[0])
     return x
 
+def build_ground_truth(title: str, subtitle: str, paragraphs: list, metadata: dict) -> str:
+    """Source text of a sample document in reading order — used as OCR ground truth."""
+    lines = ["ಮಾದರಿ ದಾಖಲೆ / FOR DEMO ONLY (SAMPLE)", title, subtitle]
+    for key, value in metadata.items():
+        lines.append(f"{key}: {value}")
+    lines.extend(paragraphs)
+    lines.append("ಸಹಿ ಮತ್ತು ಮೊಹರು")
+    lines.append("[ಸಕ್ಷಮ ಪ್ರಾಧಿಕಾರ / AUTHORITY]")
+    return "\n".join(lines) + "\n"
+
 def create_document_image(filename: str, title: str, subtitle: str, paragraphs: list, metadata: dict):
     width, height = 950, 1150
     img = Image.new("RGB", (width, height), color="#FAF9F6")
@@ -164,6 +174,13 @@ def create_document_image(filename: str, title: str, subtitle: str, paragraphs: 
         out_path = os.path.join(d, filename)
         img.save(out_path, "PNG")
         print(f"[OK] Generated: {out_path} ({os.path.getsize(out_path)} bytes)")
+
+    # Save ground truth text (source of the rendered document) next to the samples
+    stem = filename.rsplit(".", 1)[0]
+    gt_path = os.path.join(BACKEND_DIR, "..", "samples", f"{stem}.txt")
+    with open(gt_path, "w", encoding="utf-8") as gt_file:
+        gt_file.write(build_ground_truth(title, subtitle, paragraphs, metadata))
+    print(f"[OK] Ground truth: {os.path.abspath(gt_path)}")
 
     return img
 

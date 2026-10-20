@@ -4,7 +4,7 @@ import re
 import base64
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 from PIL import Image
 from dotenv import load_dotenv
 import httpx
@@ -24,9 +24,10 @@ KANNADA_OCR_PROMPT = (
     "3. NO LATIN TRANSLITERATION: NEVER transliterate Kannada words into Latin/English alphabet. Only preserve Latin characters for existing English terms, reference codes, or acronyms directly printed in the image (e.g. 'BEO', 'PDO', 'SAMPLE', 'ED-2026').\n"
     "4. NO TRANSLATION: NEVER translate Kannada into English, Hindi, or any other language. Transcribe verbatim in Kannada.\n"
     "5. NO INVENTION: NEVER invent, extrapolate, or hallucinate text that is not clearly visible in the document.\n"
-    "6. ILLEGIBLE PARTS: For any unreadable, smudged, or blurred characters, numbers, or seals, write [illegible].\n"
-    "7. PRESERVE LAYOUT: Preserve original line breaks, paragraphs, bullet points, headers, and document structure.\n"
-    "8. RAW OUTPUT ONLY: Output ONLY the transcribed text directly. Do NOT include markdown code fences, conversational greetings, or explanations."
+    "6. TRANSCRIBE ONLY, NEVER SUMMARIZE OR COMPLETE: Copy ONLY the characters physically visible, in the order they appear. NEVER summarize, paraphrase, complete, continue, or generate plausible-sounding sentences, list items, numbers, or dates. If a word, sentence, list item, number, or date is cut off, partial, or uncertain, transcribe only the clearly visible characters and write [illegible] for the uncertain remainder. Do not invent a likely ending.\n"
+    "7. ILLEGIBLE PARTS: For any unreadable, smudged, or blurred characters, numbers, or seals, write [illegible].\n"
+    "8. PRESERVE LAYOUT: Preserve original line breaks, paragraphs, bullet points, headers, and document structure. Keep numbered and bulleted lists exactly as shown, including their original numbering - never drop, merge, or renumber list items.\n"
+    "9. RAW OUTPUT ONLY: Output ONLY the transcribed text directly. Do NOT include markdown code fences, conversational greetings, or explanations."
 )
 
 KANNADA_OCR_RETRY_PROMPT = (
@@ -34,8 +35,8 @@ KANNADA_OCR_RETRY_PROMPT = (
     "The previous transcription contained incorrect script (e.g. Devanagari script instead of Kannada, or Latin transliteration).\n"
     "Transcribe exactly what is visible in the document image, in Kannada Unicode characters ONLY (U+0C80 to U+0CFF).\n"
     "NEVER transliterate into Devanagari (e.g. NEVER write 'कर्नाटक', ALWAYS write 'ಕರ್ನಾಟಕ') or Latin.\n"
-    "NEVER translate into English or Hindi. NEVER invent text.\n"
-    "Write [illegible] for any unreadable parts.\n"
+    "NEVER translate into English or Hindi. NEVER invent, summarize, complete, or extrapolate any text.\n"
+    "Copy ONLY the visible characters in order; write [illegible] wherever text is uncertain or partially visible.\n"
     "Output ONLY the exact transcribed text in authentic Kannada Unicode directly."
 )
 
@@ -119,6 +120,114 @@ def count_words_and_chars(text: str) -> tuple[int, int]:
     words = [w for w in text.split() if w]
     return len(words), len(text)
 
+# Translation runs on the optional Groq text model; OCR never needs it.
+TRANSLATION_NEEDS_GROQ_KEY = (
+    "Translation needs the optional Groq key. "
+    "Set GROQ_API_KEY in backend/.env (or the Render dashboard) to enable "
+    "Kannada to English/Hindi translation. OCR works without it."
+)
+
+# Zero-width joiners that confuse word counting, search and screen readers
+ZERO_WIDTH_JOINERS = "\u200c\u200d"
+
+def strip_zero_width_joiners(text: str) -> str:
+    """Removes U+200C (ZWNJ) and U+200D (ZWJ) from extracted text."""
+    return text.translate({ord(ch): None for ch in ZERO_WIDTH_JOINERS})
+
+def illegible_ratio(text: str) -> float:
+    """Share of output words that are the '[illegible]' placeholder marker."""
+    markers = len(re.findall(r"\[illegible\]", text, flags=re.IGNORECASE))
+    tokens = len(text.split())
+    return (markers / tokens) if tokens else 0.0
+
+# ==============================================================================
+# OCR Input Preprocessing: upscale + horizontal strip splitting
+# ==============================================================================
+
+MIN_UPSCALE_WIDTH = 1400       # small images are upscaled to at least this width
+LINES_PER_STRIP = 7            # target 6-8 lines per strip
+STRIP_OVERLAP_LINES = 1        # one line of overlap between consecutive strips
+STRIP_PAD_PX = 10              # vertical padding around each strip crop
+
+def upscale_if_small(image: Image.Image) -> Image.Image:
+    """Upscale small images so thin Kannada glyphs stay legible for vision models."""
+    if image.width < MIN_UPSCALE_WIDTH:
+        factor = MIN_UPSCALE_WIDTH / float(image.width)
+        image = image.resize(
+            (max(1, int(image.width * factor)), max(1, int(image.height * factor))),
+            Image.LANCZOS,
+        )
+    return image
+
+def detect_text_line_bands(image: Image.Image) -> list:
+    """Detect horizontal text-line bands via dark-pixel row projection.
+    Returns [(top, bottom), ...] in pixels. Empty list if detection fails."""
+    try:
+        import numpy as np
+    except ImportError:
+        return []
+
+    gray = np.asarray(image.convert("L"))
+    dark_rows = (gray < 200).sum(axis=1)
+    # ~1.5% of width: high enough to ignore page-border columns,
+    # low enough to catch sparse text rows (matras/descenders)
+    threshold = max(5, int(image.width * 0.015))
+    is_text = dark_rows > threshold
+
+    bands = []
+    start = None
+    for idx, flag in enumerate(is_text):
+        if flag and start is None:
+            start = idx
+        elif not flag and start is not None:
+            bands.append([start, idx])
+            start = None
+    if start is not None:
+        bands.append([start, len(is_text)])
+
+    # Merge bands separated by tiny gaps (within a line) and drop noise specks
+    merged = []
+    for band in bands:
+        if merged and band[0] - merged[-1][1] < 6:
+            merged[-1][1] = band[1]
+        else:
+            merged.append(band)
+    return [(top, bottom) for top, bottom in merged if bottom - top >= 4]
+
+def prepare_ocr_strips(image: Image.Image) -> list:
+    """Upscale if small, then split tall multi-line documents into overlapping
+    horizontal strips of 6-8 text lines for per-strip OCR. Returns a list of
+    images (a single upscaled image when no split is needed)."""
+    image = upscale_if_small(image)
+    bands = detect_text_line_bands(image)
+    if len(bands) <= LINES_PER_STRIP + 2:
+        return [image]
+
+    strips = []
+    idx = 0
+    while idx < len(bands):
+        chunk = bands[idx:idx + LINES_PER_STRIP]
+        top = max(0, chunk[0][0] - STRIP_PAD_PX)
+        bottom = min(image.height, chunk[-1][1] + STRIP_PAD_PX)
+        strips.append(image.crop((0, top, image.width, bottom)))
+        if idx + LINES_PER_STRIP >= len(bands):
+            break
+        idx += LINES_PER_STRIP - STRIP_OVERLAP_LINES
+    return strips
+
+def _normalize_line(line: str) -> str:
+    return " ".join(line.split()).lower()
+
+def merge_strip_texts(parts: list) -> str:
+    """Merge per-strip OCR texts, dropping the duplicated overlap line at strip boundaries."""
+    merged: list = []
+    for part in parts:
+        part_lines = part.splitlines()
+        while part_lines and merged and _normalize_line(part_lines[0]) == _normalize_line(merged[-1]):
+            part_lines.pop(0)
+        merged.extend(part_lines)
+    return "\n".join(merged).strip()
+
 # ==============================================================================
 # Base OCR Engine Interface
 # ==============================================================================
@@ -145,195 +254,7 @@ class BaseOCREngine(ABC):
         pass
 
 # ==============================================================================
-# 1. Google Gemini Engine
-# ==============================================================================
-
-class GeminiEngine(BaseOCREngine):
-    @property
-    def engine_name(self) -> str:
-        return "gemini"
-
-    def __init__(self):
-        self._refresh_config()
-
-    def _refresh_config(self):
-        load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
-        self.api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        self.model_name = os.getenv("GEMINI_MODEL", "").strip()
-        self._client = None
-        self._legacy_model = None
-
-        if self.api_key and self.model_name:
-            # Try google.genai
-            try:
-                from google import genai
-                self._client = genai.Client(api_key=self.api_key)
-                return
-            except ImportError:
-                pass
-
-            # Fallback to google.generativeai
-            try:
-                import google.generativeai as genai_legacy
-                genai_legacy.configure(api_key=self.api_key)
-                self._legacy_model = genai_legacy.GenerativeModel(self.model_name)
-            except ImportError:
-                pass
-
-    def check_ready(self) -> Dict[str, Any]:
-        self._refresh_config()
-        if not self.api_key:
-            return {
-                "ready": False,
-                "engine": self.engine_name,
-                "model": self.model_name or "Not configured",
-                "error": "GEMINI_API_KEY is not configured in backend/.env"
-            }
-        if not self.model_name:
-            return {
-                "ready": False,
-                "engine": self.engine_name,
-                "model": "Not configured",
-                "error": "GEMINI_MODEL is not configured in backend/.env"
-            }
-        return {
-            "ready": True,
-            "engine": self.engine_name,
-            "model": self.model_name
-        }
-
-    def extract_text(self, image_bytes: bytes) -> Dict[str, Any]:
-        ready = self.check_ready()
-        if not ready["ready"]:
-            return {"success": False, "error": ready["error"], "status_code": 400, "engine": self.engine_name}
-
-        try:
-            image = Image.open(io.BytesIO(image_bytes))
-        except Exception as e:
-            return {"success": False, "error": f"Invalid image file: {str(e)}", "status_code": 400, "engine": self.engine_name}
-
-        try:
-            raw_text = ""
-            if self._client:
-                response = self._client.models.generate_content(
-                    model=self.model_name,
-                    contents=[KANNADA_OCR_PROMPT, image]
-                )
-                raw_text = response.text or ""
-            elif self._legacy_model:
-                response = self._legacy_model.generate_content([KANNADA_OCR_PROMPT, image])
-                raw_text = response.text or ""
-            else:
-                return {
-                    "success": False,
-                    "error": "Gemini SDK (google-genai or google-generativeai) is not available.",
-                    "status_code": 500,
-                    "engine": self.engine_name
-                }
-
-            text = clean_llm_output(raw_text)
-
-            # Script distribution post-check
-            script_stats = analyze_script_distribution(text)
-
-            # Retry once if Devanagari share > 5% or almost no Kannada
-            if script_stats["has_script_issue"]:
-                try:
-                    retry_raw = ""
-                    if self._client:
-                        resp = self._client.models.generate_content(
-                            model=self.model_name,
-                            contents=[KANNADA_OCR_RETRY_PROMPT, image]
-                        )
-                        retry_raw = resp.text or ""
-                    elif self._legacy_model:
-                        resp = self._legacy_model.generate_content([KANNADA_OCR_RETRY_PROMPT, image])
-                        retry_raw = resp.text or ""
-
-                    retry_text = clean_llm_output(retry_raw)
-                    retry_stats = analyze_script_distribution(retry_text)
-                    if retry_stats["kannada_share"] >= script_stats["kannada_share"]:
-                        text = retry_text
-                        script_stats = retry_stats
-                except Exception as retry_err:
-                    print(f"[GeminiEngine] Script validation retry failed: {retry_err}")
-
-            word_count, char_count = count_words_and_chars(text)
-            return {
-                "success": True,
-                "text": text,
-                "word_count": word_count,
-                "char_count": char_count,
-                "engine": self.engine_name,
-                "model_used": self.model_name,
-                "warning": script_stats.get("warning"),
-                "script_stats": script_stats
-            }
-        except Exception as e:
-            err = str(e)
-            if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower():
-                return {
-                    "success": False,
-                    "error": (
-                        "Gemini API ದರ ಮಿತಿ ತಲುಪಿದೆ (Gemini API rate limit or quota exceeded). "
-                        "ದಯವಿಟ್ಟು 30 ಸೆಕೆಂಡುಗಳ ನಂತರ ಪುನಃ ಪ್ರಯತ್ನಿಸಿ (Please retry in 30s) or check your Google AI Studio quota."
-                    ),
-                    "is_rate_limit": True,
-                    "status_code": 429,
-                    "engine": self.engine_name
-                }
-            return {
-                "success": False,
-                "error": f"Gemini OCR error: {err}",
-                "status_code": 500,
-                "engine": self.engine_name
-            }
-
-    def translate_text(self, kannada_text: str, target_lang: str) -> Dict[str, Any]:
-        ready = self.check_ready()
-        if not ready["ready"]:
-            return {"success": False, "error": ready["error"], "status_code": 400, "engine": self.engine_name}
-
-        prompt = build_translation_prompt(kannada_text, target_lang)
-        try:
-            raw_text = ""
-            if self._client:
-                response = self._client.models.generate_content(
-                    model=self.model_name,
-                    contents=[prompt]
-                )
-                raw_text = response.text or ""
-            elif self._legacy_model:
-                response = self._legacy_model.generate_content(prompt)
-                raw_text = response.text or ""
-
-            translation = clean_llm_output(raw_text)
-            return {
-                "success": True,
-                "translation": translation,
-                "target_lang": target_lang,
-                "engine": self.engine_name,
-                "model_used": self.model_name
-            }
-        except Exception as e:
-            err = str(e)
-            if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower():
-                return {
-                    "success": False,
-                    "error": "Gemini API ದರ ಮಿತಿ ತಲುಪಿದೆ (Rate limit reached). Please wait a moment and retry.",
-                    "is_rate_limit": True,
-                    "status_code": 429,
-                    "engine": self.engine_name
-                }
-            return {
-                "success": False,
-                "error": f"Gemini translation error: {err}",
-                "status_code": 500,
-                "engine": self.engine_name
-            }
-
-# ==============================================================================
-# 2. Groq Engine (OpenAI-Compatible Vision & Text Models)
+# 1. Groq Engine (OpenAI-Compatible Vision & Text Models)
 # ==============================================================================
 
 class GroqEngine(BaseOCREngine):
@@ -350,6 +271,14 @@ class GroqEngine(BaseOCREngine):
         self.vision_model = os.getenv("GROQ_VISION_MODEL", "").strip()
         self.text_model = os.getenv("GROQ_TEXT_MODEL", "").strip()
         self.base_url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
+        try:
+            self.max_tokens = int(os.getenv("GROQ_MAX_TOKENS", "4096"))
+        except ValueError:
+            self.max_tokens = 4096
+        try:
+            self.max_illegible_ratio = float(os.getenv("GROQ_MAX_ILLEGIBLE_RATIO", "0.30"))
+        except ValueError:
+            self.max_illegible_ratio = 0.30
 
     def check_ready(self) -> Dict[str, Any]:
         self._refresh_config()
@@ -404,29 +333,67 @@ class GroqEngine(BaseOCREngine):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
-        payload = {
-            "model": self.vision_model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": KANNADA_OCR_PROMPT},
-                        {"type": "image_url", "image_url": {"url": image_data_uri}}
-                    ]
-                }
-            ],
-            "temperature": 0.1
-        }
 
+        def _build_payload(uri: str) -> dict:
+            return {
+                "model": self.vision_model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": KANNADA_OCR_PROMPT},
+                            {"type": "image_url", "image_url": {"url": uri}}
+                        ]
+                    }
+                ],
+                "temperature": 0.0,
+                "max_tokens": self.max_tokens
+            }
+
+        # Preprocess: upscale small images; split tall documents into overlapping
+        # 6-8 line strips, OCR each strip separately, then merge (dedupe overlap).
+        strip_uris = [image_data_uri]
         try:
+            pil_image = Image.open(io.BytesIO(image_bytes))
+            strips = prepare_ocr_strips(pil_image)
+            if len(strips) > 1:
+                strip_uris = []
+                for strip_image in strips:
+                    buf = io.BytesIO()
+                    strip_image.save(buf, format="PNG")
+                    strip_uris.append(
+                        "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
+                    )
+        except Exception as prep_err:
+            print(f"[GroqEngine] Preprocessing skipped: {prep_err}")
+
+        # Per-strip call with exponential backoff on 429 (image tokens burst TPM)
+        BACKOFF_SECONDS = [5.0, 15.0, 45.0]
+        try:
+            strip_texts = []
             with httpx.Client(timeout=60.0) as client:
-                res = client.post(endpoint, headers=headers, json=payload)
-                if res.status_code == 429:
-                    # Automatic retry after backoff
-                    retry_after = res.headers.get("retry-after")
-                    wait_time = float(retry_after) if retry_after and retry_after.isdigit() else 6.0
-                    time.sleep(min(wait_time, 15.0))
+                for strip_idx, uri in enumerate(strip_uris):
+                    payload = _build_payload(uri)
                     res = client.post(endpoint, headers=headers, json=payload)
+                    for attempt in range(len(BACKOFF_SECONDS)):
+                        if res.status_code != 429:
+                            break
+                        retry_after = (res.headers.get("retry-after") or "").strip()
+                        try:
+                            wait_time = float(retry_after) if retry_after else BACKOFF_SECONDS[attempt]
+                        except ValueError:
+                            wait_time = BACKOFF_SECONDS[attempt]
+                        wait_time = min(wait_time, 60.0)
+                        print(f"[GroqEngine] 429 rate limit — backing off {wait_time:.0f}s "
+                              f"(attempt {attempt + 1}/{len(BACKOFF_SECONDS)})")
+                        time.sleep(wait_time)
+                        res = client.post(endpoint, headers=headers, json=payload)
+                    if res.status_code != 200:
+                        break  # shared error handling below uses `res`
+                    data = res.json()
+                    strip_texts.append(clean_llm_output(data["choices"][0]["message"]["content"]))
+                    if strip_idx < len(strip_uris) - 1:
+                        time.sleep(2.0)  # pace calls to stay within TPM window
 
             if res.status_code == 429:
                 return {
@@ -453,9 +420,7 @@ class GroqEngine(BaseOCREngine):
                     "engine": self.engine_name
                 }
 
-            data = res.json()
-            raw_text = data["choices"][0]["message"]["content"]
-            text = clean_llm_output(raw_text)
+            text = merge_strip_texts(strip_texts)
 
             # Script distribution post-check
             script_stats = analyze_script_distribution(text)
@@ -473,7 +438,8 @@ class GroqEngine(BaseOCREngine):
                             ]
                         }
                     ],
-                    "temperature": 0.05
+                    "temperature": 0.0,
+                    "max_tokens": self.max_tokens
                 }
                 try:
                     with httpx.Client(timeout=60.0) as client:
@@ -492,6 +458,24 @@ class GroqEngine(BaseOCREngine):
                                 script_stats = retry_stats
                 except Exception as retry_err:
                     print(f"[GroqEngine] Script validation retry failed: {retry_err}")
+
+            # Abort when the model read almost nothing and filled the page with
+            # [illegible] placeholders — better to fail loudly than ship garbage.
+            ratio = illegible_ratio(text)
+            if ratio > self.max_illegible_ratio:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Groq output rejected: {ratio * 100:.1f}% of the transcription is "
+                        f"[illegible] (limit {self.max_illegible_ratio * 100:.0f}%). "
+                        "The model could not reliably read this document."
+                    ),
+                    "status_code": 422,
+                    "engine": self.engine_name,
+                    "is_low_confidence": True,
+                    "illegible_ratio": round(ratio, 4),
+                    "text": text
+                }
 
             word_count, char_count = count_words_and_chars(text)
 
@@ -523,7 +507,9 @@ class GroqEngine(BaseOCREngine):
     def translate_text(self, kannada_text: str, target_lang: str) -> Dict[str, Any]:
         ready = self.check_ready()
         if not ready["ready"]:
-            return {"success": False, "error": ready["error"], "status_code": 400, "engine": self.engine_name}
+            # Missing API key is the common, fixable case — say exactly what's needed
+            error = TRANSLATION_NEEDS_GROQ_KEY if not self.api_key else ready["error"]
+            return {"success": False, "error": error, "status_code": 400, "engine": self.engine_name}
 
         prompt = build_translation_prompt(kannada_text, target_lang)
         endpoint = f"{self.base_url}/chat/completions"
@@ -588,7 +574,7 @@ class GroqEngine(BaseOCREngine):
             }
 
 # ==============================================================================
-# 3. Tesseract Offline Engine (pytesseract + OpenCV preprocessing)
+# 2. Tesseract Offline Engine (pytesseract + OpenCV preprocessing)
 # ==============================================================================
 
 class TesseractEngine(BaseOCREngine):
@@ -600,8 +586,15 @@ class TesseractEngine(BaseOCREngine):
         self._refresh_config()
 
     def _refresh_config(self):
+        # Load backend/.env explicitly so TESSERACT_CMD / TESSDATA_PREFIX are read
+        # no matter which directory the process was started from.
+        load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
         self.tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip()
         self.tessdata_prefix = os.getenv("TESSDATA_PREFIX", "").strip()
+        try:
+            self.default_psm = int(os.getenv("TESSERACT_PSM", "6"))
+        except ValueError:
+            self.default_psm = 6
         self._pytesseract_available = False
         self._cv2_available = False
 
@@ -609,11 +602,13 @@ class TesseractEngine(BaseOCREngine):
             import pytesseract
             self.pytesseract = pytesseract
             self._pytesseract_available = True
-            
-            # Configure custom command path if provided or common Windows paths
-            if self.tesseract_cmd and os.path.exists(self.tesseract_cmd):
+
+            # Point pytesseract at the binary configured in .env (TESSERACT_CMD)
+            if self.tesseract_cmd and os.path.isfile(self.tesseract_cmd):
                 self.pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
             else:
+                if self.tesseract_cmd:
+                    print(f"[TesseractEngine] TESSERACT_CMD not found: {self.tesseract_cmd}")
                 common_paths = [
                     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
                     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"
@@ -626,8 +621,16 @@ class TesseractEngine(BaseOCREngine):
         except ImportError:
             self.pytesseract = None
 
+        # Only publish a TESSDATA_PREFIX that actually exists; a stale/invalid
+        # value hides valid language data (e.g. kan.traineddata) from Tesseract.
         if self.tessdata_prefix:
-            os.environ["TESSDATA_PREFIX"] = self.tessdata_prefix
+            if os.path.isdir(self.tessdata_prefix):
+                os.environ["TESSDATA_PREFIX"] = self.tessdata_prefix
+            else:
+                print(f"[TesseractEngine] TESSDATA_PREFIX does not exist: {self.tessdata_prefix}")
+                os.environ.pop("TESSDATA_PREFIX", None)
+        elif os.environ.get("TESSDATA_PREFIX") and not os.path.isdir(os.environ["TESSDATA_PREFIX"]):
+            os.environ.pop("TESSDATA_PREFIX", None)
 
         try:
             import cv2
@@ -659,9 +662,12 @@ class TesseractEngine(BaseOCREngine):
         # Check binary availability
         try:
             ver = self.pytesseract.get_tesseract_version()
-            # Check available languages
-            langs = self.pytesseract.get_languages()
-            has_kannada = "kan" in langs
+            # Check available languages (names may be prefixed with a path)
+            langs = self.pytesseract.get_languages(config="")
+            has_kannada = any(
+                lang.strip().lower() == "kan" or lang.replace("\\", "/").rstrip("/").endswith("/kan")
+                for lang in langs
+            )
             if not has_kannada:
                 return {
                     "ready": False,
@@ -712,7 +718,7 @@ class TesseractEngine(BaseOCREngine):
         _, thresh = self.cv2.threshold(denoised, 0, 255, self.cv2.THRESH_BINARY + self.cv2.THRESH_OTSU)
         return thresh
 
-    def extract_text(self, image_bytes: bytes) -> Dict[str, Any]:
+    def extract_text(self, image_bytes: bytes, psm: Optional[int] = None) -> Dict[str, Any]:
         ready = self.check_ready()
         if not ready["ready"]:
             return {"success": False, "error": ready["error"], "status_code": 400, "engine": self.engine_name}
@@ -720,10 +726,11 @@ class TesseractEngine(BaseOCREngine):
         try:
             processed_img = self._preprocess_image(image_bytes)
             # Custom tesseract config for Indic text
-            custom_config = r"--oem 1 --psm 6"
+            psm_value = self.default_psm if psm is None else int(psm)
+            custom_config = f"--oem 1 --psm {psm_value}"
             raw_text = self.pytesseract.image_to_string(processed_img, lang="kan", config=custom_config)
-            
-            clean_text = raw_text.strip()
+
+            clean_text = strip_zero_width_joiners(raw_text.strip())
             script_stats = analyze_script_distribution(clean_text)
             word_count, char_count = count_words_and_chars(clean_text)
 
@@ -733,7 +740,7 @@ class TesseractEngine(BaseOCREngine):
                 "word_count": word_count,
                 "char_count": char_count,
                 "engine": self.engine_name,
-                "model_used": "tesseract-kan",
+                "model_used": f"tesseract-kan (psm {psm_value})",
                 "warning": script_stats.get("warning"),
                 "script_stats": script_stats
             }
@@ -746,19 +753,15 @@ class TesseractEngine(BaseOCREngine):
             }
 
     def translate_text(self, kannada_text: str, target_lang: str) -> Dict[str, Any]:
-        """Tesseract is an offline OCR engine and cannot translate. Delegates to Gemini or Groq if available."""
-        # Check if Gemini or Groq is configured
-        gemini = GeminiEngine()
-        if gemini.check_ready()["ready"]:
-            return gemini.translate_text(kannada_text, target_lang)
-
+        """Tesseract is an offline OCR engine and cannot translate. Delegates to Groq if available."""
         groq = GroqEngine()
-        if groq.check_ready()["ready"]:
+        ready = groq.check_ready()
+        if ready["ready"]:
             return groq.translate_text(kannada_text, target_lang)
 
         return {
             "success": False,
-            "error": "Tesseract is an offline OCR engine and does not support translation. Please configure GEMINI_API_KEY or GROQ_API_KEY in backend/.env for translation.",
+            "error": TRANSLATION_NEEDS_GROQ_KEY if not groq.api_key else ready["error"],
             "status_code": 400,
             "engine": self.engine_name
         }
@@ -770,59 +773,74 @@ class TesseractEngine(BaseOCREngine):
 class UnifiedOCRManager:
     def __init__(self):
         self.engines: Dict[str, BaseOCREngine] = {
-            "gemini": GeminiEngine(),
             "groq": GroqEngine(),
             "tesseract": TesseractEngine()
         }
 
     def get_configured_engine_name(self) -> str:
         load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
-        return os.getenv("OCR_ENGINE", "gemini").strip().lower()
+        return os.getenv("OCR_ENGINE", "tesseract").strip().lower()
 
     def get_engine(self, engine_name: Optional[str] = None) -> BaseOCREngine:
         name = (engine_name or self.get_configured_engine_name()).lower()
         if name not in self.engines:
-            # Fallback to gemini if unrecognized
-            name = "gemini"
+            # Default to Tesseract (offline) if the requested engine is unknown
+            name = "tesseract"
         return self.engines[name]
 
     def check_all_engines(self) -> Dict[str, Any]:
         """Returns readiness and configuration status for every engine."""
         return {name: eng.check_ready() for name, eng in self.engines.items()}
 
-    def _resolve_engine(self, engine_name: Optional[str], for_translation: bool = False) -> Tuple[BaseOCREngine, Optional[str]]:
-        """Resolve the engine to use. If the preferred engine is not ready,
-        automatically fall back to any other ready engine (Tesseract cannot translate)."""
-        preferred = self.get_engine(engine_name)
-        preferred_name = preferred.engine_name
-        preferred_status = preferred.check_ready()
-        if preferred_status.get("ready"):
-            return preferred, None
+    # If the AI (Groq) output is far larger than Tesseract's on the same image,
+    # the model likely invented content — warn the user to verify.
+    CROSSCHECK_CHAR_RATIO = 1.5
+    CROSSCHECK_LINE_RATIO = 1.5
+    CROSSCHECK_MIN_TESS_CHARS = 20
+    CROSSCHECK_WARNING = "Machine-read text, please verify against the original."
 
-        for name, eng in self.engines.items():
-            if eng is preferred:
-                continue
-            if for_translation and name == "tesseract":
-                continue
-            if eng.check_ready().get("ready"):
-                warning = (
-                    f"Engine '{preferred_name}' is not ready "
-                    f"({preferred_status.get('error', 'not configured')}). "
-                    f"Automatically switched to '{name}'."
-                )
-                return eng, warning
-        return preferred, None
+    def _crosscheck_with_tesseract(self, result: Dict[str, Any], image_bytes: bytes) -> list:
+        """Runs Tesseract on the same image; if the Groq output has far more
+        characters or lines, returns a verification warning list. Returns []
+        when Tesseract is unavailable or the check cannot run."""
+        try:
+            tess = self.engines.get("tesseract")
+            if tess is None or not tess.check_ready().get("ready"):
+                return []
+            t_res = tess.extract_text(image_bytes)
+            if not t_res.get("success"):
+                return []
+
+            t_text = t_res.get("text", "") or ""
+            g_text = result.get("text", "") or ""
+            t_chars = t_res.get("char_count", 0) or 0
+            g_chars = result.get("char_count", 0) or 0
+            t_lines = len([ln for ln in t_text.splitlines() if ln.strip()])
+            g_lines = len([ln for ln in g_text.splitlines() if ln.strip()])
+
+            if t_chars < self.CROSSCHECK_MIN_TESS_CHARS or t_lines == 0:
+                return []
+
+            if (g_chars > t_chars * self.CROSSCHECK_CHAR_RATIO or
+                    g_lines > t_lines * self.CROSSCHECK_LINE_RATIO):
+                return [self.CROSSCHECK_WARNING]
+            return []
+        except Exception as check_err:
+            print(f"[UnifiedOCRManager] Tesseract cross-check skipped: {check_err}")
+            return []
 
     def extract_text(self, image_bytes: bytes, engine_name: Optional[str] = None) -> Dict[str, Any]:
-        engine, fallback_warning = self._resolve_engine(engine_name)
+        engine = self.get_engine(engine_name)
         result = engine.extract_text(image_bytes)
-        if fallback_warning:
-            existing = result.get("warning")
-            result["warning"] = f"{existing} {fallback_warning}" if existing else fallback_warning
+        if result.get("success"):
+            ocr_warnings = []
+            if result.get("engine") == "groq":
+                ocr_warnings.extend(self._crosscheck_with_tesseract(result, image_bytes))
+            result["ocr_warnings"] = ocr_warnings
         return result
 
     def translate_text(self, kannada_text: str, target_lang: str, engine_name: Optional[str] = None) -> Dict[str, Any]:
-        engine, _ = self._resolve_engine(engine_name, for_translation=True)
+        engine = self.get_engine(engine_name)
         return engine.translate_text(kannada_text, target_lang)
 
     def check_ready(self, engine_name: Optional[str] = None) -> Dict[str, Any]:

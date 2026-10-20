@@ -22,18 +22,19 @@ Develop a solution that converts Kannada text from images, scanned documents, or
 
 | Existing approach | Limitation |
 |---|---|
-| Traditional OCR (Tesseract + kanna traineddata) | Low accuracy on modern scans, notices, and mixed Kannada-English text; no understanding of context |
+| Raw OCR out of the box (Tesseract + `kan` traineddata) | Low accuracy on modern scans and mixed Kannada-English text — no preprocessing, no script validation, no cross-check (our app adds all three, with an optional Groq vision model on top) |
 | General cloud OCR (Google Vision, AWS Textract) | Weak Indic-script support, pay-per-call pricing, no Kannada-specific validation |
 | Manual transcription | Slow, expensive, error-prone, does not scale to thousands of documents |
 | Static PDF text layers | Only works if the original PDF already contains text; useless for photos/scan images |
 
 ## 3. How Our Solution Is Different
 
-1. **Engine-agnostic multi-engine architecture** — a pluggable `OCR Manager` routes the same image to **Gemini (multimodal LLM)**, **Groq (open vision LLM)**, or **Tesseract (offline)** via config or per-request override. No vendor lock-in; graceful degradation when a quota runs out.
-2. **Script-distribution validation** — after extraction, output is analyzed for Kannada/Devanagari/Latin character shares. If the model "slips" into the wrong script, a **targeted retry prompt** runs automatically — catching errors traditional OCR never detects.
+1. **Two engines, one sensible default** — a pluggable `OCR Manager` routes the same image to **Tesseract (offline, default)** or to the optional **Groq (open vision LLM)** via config or per-request override. Tesseract runs with **zero API keys**; Groq is opt-in when a key is configured. No vendor lock-in.
+2. **Script-distribution validation** — after extraction, output is analyzed for Kannada/Devanagari/Latin character shares and surfaced to the user. On the **Groq path only** (the vision model), a wrong-script answer triggers an automatic **targeted retry prompt**; Tesseract output gets the same analysis and warnings, but no retry — its failures already show up as low Kannada share.
 3. **Understand + hear, not just extract** — one-click translation to English/Hindi and authentic **Kannada text-to-speech** (browser native or gTTS backend fallback) make content accessible to non-readers and the visually impaired.
 4. **Searchable from the moment it's extracted** — in-text search with match highlighting, editable transcription pane, copy / TXT export / print-to-PDF.
 5. **Built for real documents** — upload, drag-and-drop, **camera capture on mobile** (photograph a notice in the wild), and ready-made sample documents (circular, public notice, textbook) for instant demos.
+6. **Honest output** — when the optional vision model returns far more text than offline Tesseract finds on the same image, the result carries a **"machine-read text, please verify"** warning.
 
 ## 4. Approach & Workflow
 
@@ -42,13 +43,14 @@ Image OR PDF input (upload / camera / sample)
         │  PDF? render up to 10 pages → page-wise OCR
         ▼
 FastAPI backend  ──►  UnifiedOCRManager
-                          │  picks engine: gemini | groq | tesseract
-                          │  not ready? auto-fallback to any ready engine
+                          │  picks engine: tesseract (default) | groq (optional)
+                          │  Groq not configured? Tesseract still runs offline
                           ▼
                    Vision / OCR engine  ──►  raw Kannada Unicode text
                           │
                           ▼
-              Script-distribution check ── issue? one smart retry
+               Script-distribution check (both engines)
+               Groq path only: issue? one smart retry
                           │
                           ▼
         { text, word/char counts, script stats, engine used }
@@ -56,14 +58,14 @@ FastAPI backend  ──►  UnifiedOCRManager
         ┌─────────────────┼──────────────────┐
         ▼                 ▼                  ▼
   Editable pane      Translate API       TTS API
-  + search/highlight   (EN / HI)      (gTTS, lang='kn')
-  + copy / TXT / PDF
+  + search/highlight  (EN / HI, needs     (gTTS, lang='kn')
+  + copy / TXT / PDF   optional Groq key)
 ```
 
 **Key design decisions**
 
 - *Why a manager pattern?* LLM APIs change quotas and pricing monthly; Tesseract is free but weaker. The manager makes the engine a **swap-able config value**, and the UI shows which engine produced a result.
-- *Why post-hoc script validation?* LLMs occasionally answer in Devanagari or English for Indic OCR tasks. Measuring Unicode ranges is cheap, deterministic, and fixes a whole class of silent failures.
+- *Why post-hoc script validation?* LLMs occasionally answer in Devanagari or English for Indic OCR tasks. Measuring Unicode ranges is cheap and deterministic and fixes a whole class of silent failures — the corrective **retry runs only on the Groq path**, where the failure mode exists.
 - *Why a same-origin deployment?* The FastAPI app serves the built frontend, so the live demo is **one URL, zero CORS issues**.
 
 ## 5. Tech Stack & Architecture
@@ -72,8 +74,8 @@ FastAPI backend  ──►  UnifiedOCRManager
 |---|---|
 | Frontend | Vanilla JS (ES modules), HTML5, CSS3, Vite 6 (build tooling) |
 | Backend | Python 3.12, FastAPI, Uvicorn, Pydantic, pypdfium2 (PDF page rendering) |
-| OCR engines | Google Gemini (gemini-2.0-flash), Groq vision LLM, Tesseract + OpenCV (offline) |
-| Translation | LLM-based (Gemini / Groq) Kannada → English / Hindi |
+| OCR engines | Tesseract + OpenCV (offline, **default**), Groq vision LLM (optional) |
+| Translation | LLM-based (Groq) Kannada → English / Hindi |
 | Text-to-Speech | Web Speech API (browser) with gTTS (`lang='kn'`) server fallback |
 | Deployment | Render (single web service), config via `render.yaml` + env vars |
 
@@ -94,24 +96,29 @@ FastAPI backend  ──►  UnifiedOCRManager
                     └──────────┬──────────┘
                     ┌──────────▼──────────┐
                     │ UnifiedOCRManager   │  engine selection & status
-                    └──┬───────┬───────┬──┘
-                       ▼       ▼       ▼
-                   Gemini    Groq   Tesseract
-                  (LLM)    (LLM)   (offline OCR)
-                       │       │       │
-                       └───────┴───────┘
-                    script validation + retry
-                    translation · gTTS fallback
+                    └──┬──────────┬───┘
+                       ▼          ▼
+                   Tesseract    Groq
+                (offline,     (optional
+                  default)    vision LLM)
+                       │          │
+                       └────┬─────┘
+                            ▼
+                    script stats + warnings
+                    Groq path: smart retry +
+                    Tesseract cross-check warning
+                    translation (needs GROQ_API_KEY)
+                    · gTTS fallback
 ```
 
 ## 6. Features
 
-- **Multi-engine OCR** — Gemini, Groq, or Tesseract; pick the engine from the **header dropdown** (or Auto = backend default), see status live in the badge — and if an engine isn't ready, the manager **auto-falls back** to any other ready engine
-- **Image + PDF input** — file upload, drag-and-drop, mobile camera capture, multi-page **PDF** (rendered page-wise with per-page markers), plus 4 built-in sample documents including a **simulated handwritten note**
-- **Script validation** — Kannada/Devanagari/Latin share analysis with automatic corrective retry and user-facing warnings
+- **Two engines, one default** — Tesseract (offline) is the default, Groq is optional; pick the engine from the **header dropdown** (Groq · Tesseract offline, default), see status live in the badge
+- **Image + PDF input** — file upload, drag-and-drop, mobile camera capture, multi-page **PDF** (rendered page-wise with per-page markers), plus 4 built-in sample documents — sample 4 is a **simulated handwriting note generated by script (not real handwriting)**
+- **Script validation** — Kannada/Devanagari/Latin share analysis with user-facing warnings on both engines; on the **Groq path only**, an automatic corrective retry plus a **machine-read text, please verify** cross-check notice when the vision model's output is inflated vs Tesseract
 - **Split-view workstation** — original image (zoomable) beside an *editable* transcription
 - **In-text search** — live match counter and highlight inside extracted text
-- **Translation** — Kannada → English or Hindi on demand
+- **Translation** — Kannada → English or Hindi on demand; needs the optional `GROQ_API_KEY`, and without it the UI says **"Translation needs the optional Groq key"** instead of a generic error (OCR keeps working offline)
 - **Read aloud** — native browser Kannada voice, backend gTTS fallback (`/api/tts`)
 - **Export** — copy, download `.txt`, print / save as PDF with a formatted digital-copy header
 - **Rate-limit UX** — 429 detection, bilingual alert banner, countdown, one-click retry
@@ -122,7 +129,7 @@ FastAPI backend  ──►  UnifiedOCRManager
 Kannada/
 ├── backend/
 │   ├── main.py            # FastAPI app: /api/ocr, /api/translate, /api/tts, static serving
-│   ├── ocr_service.py     # Engines (Gemini, Groq, Tesseract) + UnifiedOCRManager
+│   ├── ocr_service.py     # Engines (Tesseract default, Groq optional) + UnifiedOCRManager
 │   ├── requirements.txt
 │   ├── .env.example       # copy to .env and fill in keys
 │   ├── create_samples.py  # generates the sample document images
@@ -135,7 +142,9 @@ Kannada/
 │   ├── public/samples/    # demo documents served at /samples
 │   └── dist/              # production build (served by the backend)
 ├── docs/                  # presentation, video script
-├── render.yaml            # one-click deployment config
+├── Dockerfile             # multi-stage: Node builds frontend → Python+Tesseract runtime
+├── .dockerignore          # excludes .env, .git, node_modules, __pycache__, …
+├── render.yaml            # one-click deployment config (Render Docker runtime)
 └── README.md
 ```
 
@@ -147,7 +156,7 @@ Kannada/
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env    # Windows — then fill in at least one API key
+copy .env.example .env    # Windows — Tesseract runs with no key; add GROQ_API_KEY for the optional Groq engine
 uvicorn main:app --reload --port 8000
 ```
 
@@ -171,13 +180,15 @@ cd ../backend && uvicorn main:app --port 8000
 
 | Variable | Purpose |
 |---|---|
-| `OCR_ENGINE` | `gemini` \| `groq` \| `tesseract` |
-| `GEMINI_API_KEY` | Google AI Studio key (Gemini OCR + translation) |
-| `GROQ_API_KEY` | Groq key (Groq OCR + translation) |
+| `OCR_ENGINE` | `tesseract` (default) \| `groq` (optional) |
+| `GROQ_API_KEY` | Optional — enables Groq OCR + translation; without it the UI shows **"Translation needs the optional Groq key"** (Tesseract OCR still works) |
+| `GROQ_MAX_TOKENS` | Max output tokens per Groq call (default `4096`) |
+| `GROQ_MAX_ILLEGIBLE_RATIO` | Abort when more than this share of words is `[illegible]` (default `0.30`) |
 | `TESSERACT_CMD` | Optional path to the Tesseract binary (offline engine) |
+| `TESSERACT_PSM` | Tesseract page-segmentation mode (default `6`) |
 | `CORS_ORIGINS` | Comma-separated origins for split deployments |
 
-> Tesseract is fully offline — install [Tesseract-OCR](https://github.com/tesseract-ocr/tesseract) plus the `kann` language data to run with **zero API keys**.
+> Tesseract is fully offline — install [Tesseract-OCR](https://github.com/tesseract-ocr/tesseract) plus the `kan` language data (Debian/Ubuntu package: `tesseract-ocr-kan`) to run with **zero API keys**.
 
 ## 9. API Reference
 
@@ -193,15 +204,39 @@ Interactive docs: `/docs` (Swagger UI).
 
 ## 10. Deployment
 
-The repo ships with **`render.yaml`** — on [Render](https://render.com): *New → Blueprint*, point at the GitHub repo, then set `GEMINI_API_KEY` and/or `GROQ_API_KEY` in the service dashboard. The build also installs **Tesseract with Kannada language data** on the server, so all three engines are available out of the box. The FastAPI service serves both API and UI at one URL; `GET /api/health` is the health check.
+The repo ships with **`render.yaml`** — on [Render](https://render.com): *New → Blueprint*, point at the GitHub repo. The service uses Render's **Docker runtime** (`runtime: docker`, `dockerfilePath: ./Dockerfile`). The multi-stage `Dockerfile` builds the Vite frontend on Node, then copies `frontend/dist` into a `python:3.12-slim` image that installs **Tesseract and its Kannada language data** (`tesseract-ocr-kan`, language code **`kan`**). FastAPI runs uvicorn on `$PORT` and serves both API and UI at one URL; `GET /api/health` is the health check. The default engine is Tesseract — **no API keys at all**. To enable the optional Groq engine, set `GROQ_API_KEY` (and `OCR_ENGINE=groq`) in the service dashboard.
 
-Alternatives: any Python host (Railway, Hugging Face Spaces, PythonAnywhere, a VM) — the only requirement is `pip install -r backend/requirements.txt` + the start command in `render.yaml`. Commit `frontend/dist` (or run `npm run build` in the deploy pipeline).
+`.dockerignore` keeps `.env`, `.git`, `node_modules`, and `__pycache__` out of the build context. No secrets in the Dockerfile or `render.yaml` — pass `GROQ_API_KEY` (and optionally `OCR_ENGINE`) at runtime. Local Docker:
 
-## 11. Limitations & Future Scope
+```bash
+docker build -t kannada-lipi-mitra .
+docker run -p 8000:8000 -e GROQ_API_KEY=... kannada-lipi-mitra
+```
 
-**Limitations:** handwriting accuracy depends on engine quality; gTTS needs internet; free-tier LLM quotas can throttle heavy use (the UI surfaces this clearly).
+Non-Docker alternative: any Python host (Railway, Hugging Face Spaces, PythonAnywhere, a VM) — install Tesseract + `tesseract-ocr-kan`, run `pip install -r backend/requirements.txt`, run `cd frontend && npm ci && npm run build`, and start uvicorn.
 
-**Future scope:** batch PDF ingestion with page-wise OCR, on-device IndicOCR fine-tune for offline handwriting, transliteration (Kannada → Latin), multi-dialect phrase bank for PS-04 crossover, and screen-reader-optimized accessibility mode.
+## 11. Measured Accuracy
+
+**Test set: 4 images, all synthetic.** Every PNG in `samples/` was rendered by our own generator scripts (`create_samples.py`, `create_handwriting_sample.py`) from known Kannada text. There are **zero real photographs, scans, or real handwriting** in this set — `sample_handwriting.png` is **simulated** pen-stroke rendering, not a photo of handwriting. Four documents is a **small test set**; these numbers are not a claim of production accuracy on arbitrary Karnataka government circulars, land records, or manuscripts.
+
+**Metric: CER only, against ground-truth text files.** Reproduce with `python backend/compare_engines.py`. **CER** (character error rate) = Levenshtein distance over characters divided by reference length, computed **only** against the matching `samples/<name>.txt` (zero-width joiners stripped, whitespace collapsed). Lower is better; `0.00%` = exact match. No word-accuracy, no subjective scoring, no cherry-picked images. Failed or rate-limited runs are shown as failures, not omitted.
+
+| Sample (4 total, 4 generated, 0 real) | Groq (vision LLM) | Tesseract psm 4 | Tesseract psm 6 (default) |
+|---|---|---|---|
+| `sample_circular.png` *(generated)* | 52.35% (48.9s) | 20.75% (0.84s) | **20.51%** (0.66s) |
+| `sample_handwriting.png` *(simulated, not real handwriting)* | 35.29% (20.9s) | **13.24%** (0.35s) | 13.97% (0.28s) |
+| `sample_notice.png` *(generated)* | 50.27% (99.5s) \* | 23.38% (0.71s) | **22.16%** (2.60s) |
+| `sample_textbook.png` *(generated)* | **failed** — rate-limited ✗ (183.9s) \* | 17.62% (0.94s) | **16.25%** (0.92s) |
+
+\* Groq results vary between runs, and free-tier rate limits can fail a call outright — as on the textbook sample above. On these generated samples the offline default is both **more accurate and far faster**, which is exactly why Tesseract is the default and Groq stays optional. The engine dropdown lets you compare both on your own documents.
+
+**Reading these numbers honestly:** best Tesseract CER on this set is **13.24%** (handwriting sample) and worst is **22.16%** (notice, default psm 6) — i.e. roughly **13–22 characters wrong per 100**. That is usable as a draft transcription aid with the editable pane, **not** as unattended digitization. Groq CER on the same images is **35–52%** or a hard failure. We publish the bad numbers because hiding them would misrepresent readiness.
+
+## 12. Limitations & Future Scope
+
+**Limitations:** sample 4 is **simulated handwriting generated by script, not real handwriting** — no handwriting recognition is claimed; gTTS needs internet; free-tier Groq quotas can throttle or fail heavy use (the UI surfaces this clearly, and OCR keeps working offline).
+
+**Future scope:** batch PDF ingestion with page-wise OCR, transliteration (Kannada → Latin), multi-dialect phrase bank for PS-04 crossover, screen-reader-optimized accessibility mode, and evaluation of on-device models for real handwriting (beyond today's simulated sample).
 
 ---
 

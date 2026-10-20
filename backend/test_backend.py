@@ -24,21 +24,7 @@ def test_environment():
         print("Run: pip install -r requirements.txt")
         return False
 
-    # 3. Test Gemini import
-    has_genai = False
-    try:
-        from google import genai
-        print("[OK] google-genai modern SDK is installed.")
-        has_genai = True
-    except ImportError:
-        try:
-            import google.generativeai
-            print("[OK] google-generativeai SDK is installed.")
-            has_genai = True
-        except ImportError:
-            print("[WARN] Neither google-genai nor google-generativeai found yet.")
-
-    # 4. Test ocr_service loading
+    # 3. Test ocr_service loading
     try:
         from ocr_service import ocr_manager
         active_name = ocr_manager.get_configured_engine_name()

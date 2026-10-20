@@ -1,24 +1,15 @@
-# One-service deployment: FastAPI serves both the API and the built frontend (frontend/dist).
-# Add GEMINI_API_KEY (or GROQ_API_KEY) in the Render dashboard after creating the service.
+# One-service deployment: Docker image (see Dockerfile) — FastAPI serves
+# both the API and the built frontend (frontend/dist baked into the image).
+# Tesseract + Kannada data (kan) are installed inside the Dockerfile.
 services:
   - type: web
     name: kannada-lipi-mitra
-    runtime: python
+    runtime: docker
     plan: free
-    # Tesseract + Kannada data is a bonus offline engine; install is non-fatal
-    # so the service still deploys (Groq/Gemini) if apt packages are unavailable.
-    buildCommand: >
-      sudo apt-get update -qq &&
-      (sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-kann || echo "tesseract install skipped") &&
-      pip install -r backend/requirements.txt
-    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.5
       - key: OCR_ENGINE
-        value: groq
-      - key: GEMINI_API_KEY
-        sync: false
+        value: tesseract
       - key: GROQ_API_KEY
         sync: false
       - key: CORS_ORIGINS

@@ -1,9 +1,16 @@
 """
-Engine Comparison Utility for Kannada Lipi Mitra
-Runs all configured OCR engines (Gemini, Groq, Tesseract) on test images in backend/test_images/
-and displays a side-by-side comparative benchmark table.
+OCR Engine Benchmark for Kannada Lipi Mitra.
+
+Runs every ready engine on samples/*.png (the documents the UI serves) and
+reports CER (Character Error Rate) against the ground truth captured from the
+sample sources in samples/<name>.txt.
+
+Usage:
+    python compare_engines.py            # benchmark + one summary table
+    python compare_engines.py -v         # also print each engine's raw output
 """
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -16,140 +23,141 @@ if sys.stdout.encoding != "utf-8":
     except AttributeError:
         pass
 
-# Load environment
 BACKEND_DIR = Path(__file__).resolve().parent
+SAMPLES_DIR = BACKEND_DIR.parent / "samples"
+VERBOSE = any(arg in ("-v", "--verbose") for arg in sys.argv[1:])
+
 load_dotenv(BACKEND_DIR / ".env")
 
-from ocr_service import ocr_manager
+from ocr_service import ocr_manager, strip_zero_width_joiners
 
-TEST_IMAGES_DIR = BACKEND_DIR / "test_images"
 
-def format_box(title: str, text: str, width: int = 80) -> str:
-    line = "─" * (width - 2)
-    preview = text.strip()
-    if len(preview) > 300:
-        preview = preview[:300] + " ... [TRUNCATED FOR DISPLAY]"
-    return f"┌─ {title} {line[len(title) + 3:]}┐\n{preview}\n└{line}┘"
+def normalize_for_cer(text: str) -> str:
+    """CER normalization: drop zero-width joiners, collapse all whitespace."""
+    return re.sub(r"\s+", " ", strip_zero_width_joiners(text)).strip()
 
-def run_engine_comparison():
-    print("\n" + "=" * 80)
-    print("   ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — OCR ENGINE COMPARISON & BENCHMARK")
-    print("=" * 80)
 
-    # 1. Discover test images
-    if not TEST_IMAGES_DIR.exists():
-        print(f"\n[ERROR] Directory not found: {TEST_IMAGES_DIR}")
-        print("Please create 'backend/test_images/' and add sample Kannada images.")
-        return
+def character_error_rate(reference: str, hypothesis: str) -> float:
+    """Levenshtein distance over characters, divided by reference length."""
+    ref = normalize_for_cer(reference)
+    hyp = normalize_for_cer(hypothesis)
+    if not ref:
+        return 0.0 if not hyp else 1.0
 
-    images = list(TEST_IMAGES_DIR.glob("*.png")) + list(TEST_IMAGES_DIR.glob("*.jpg")) + list(TEST_IMAGES_DIR.glob("*.jpeg"))
-    if not images:
-        print(f"\n[WARN] No test images found in: {TEST_IMAGES_DIR}")
-        print("Run 'python create_samples.py' to generate default sample documents.")
-        return
+    prev = list(range(len(hyp) + 1))
+    for i, ref_char in enumerate(ref, 1):
+        curr = [i] + [0] * len(hyp)
+        for j, hyp_char in enumerate(hyp, 1):
+            curr[j] = min(
+                prev[j] + 1,          # deletion
+                curr[j - 1] + 1,      # insertion
+                prev[j - 1] + (ref_char != hyp_char),  # substitution / match
+            )
+        prev = curr
+    return prev[-1] / len(ref)
 
-    print(f"\nDiscovered {len(images)} test document(s) in {TEST_IMAGES_DIR.name}:")
-    for idx, img in enumerate(images, 1):
-        size_kb = img.stat().st_size / 1024
-        print(f"  {idx}. {img.name} ({size_kb:.1f} KB)")
 
-    # 2. Check engine status
-    print("\n" + "─" * 80)
-    print("ENGINE CONFIGURATION STATUS:")
-    engines_status = ocr_manager.check_all_engines()
-    active_engine_name = ocr_manager.get_configured_engine_name()
+def build_engine_runs() -> list:
+    """Returns [(label, callable), ...] for every engine that is ready."""
+    status = ocr_manager.check_all_engines()
+    active = ocr_manager.get_configured_engine_name()
 
-    for name, info in engines_status.items():
-        is_active = (name == active_engine_name)
-        active_badge = " [ACTIVE ENGINE in .env]" if is_active else ""
+    print("\nENGINE STATUS:")
+    for name, info in status.items():
+        badge = " [ACTIVE in .env]" if name == active else ""
         if info.get("ready"):
-            model_info = info.get("model") or f"{info.get('vision_model', '')} / {info.get('text_model', '')}"
-            print(f"  • {name.upper()}{active_badge}: READY (Model: {model_info})")
+            model = info.get("model") or f"{info.get('vision_model', '')} / {info.get('text_model', '')}"
+            print(f"  - {name.upper()}{badge}: READY ({model})")
         else:
-            print(f"  • {name.upper()}{active_badge}: NOT READY ({info.get('error')})")
+            print(f"  - {name.upper()}{badge}: NOT READY ({info.get('error')})")
 
-    # 3. Benchmark each image across all engines
-    results = []
-    
-    for img_path in images:
-        print("\n" + "=" * 80)
-        print(f"TESTING DOCUMENT: {img_path.name}")
-        print("=" * 80)
+    runs = []
+    if status.get("groq", {}).get("ready"):
+        groq = ocr_manager.engines["groq"]
+        runs.append(("groq", lambda data: groq.extract_text(data)))
+    if status.get("tesseract", {}).get("ready"):
+        tesseract = ocr_manager.engines["tesseract"]
+        runs.append(("tesseract psm 4", lambda data: tesseract.extract_text(data, psm=4)))
+        runs.append(("tesseract psm 6", lambda data: tesseract.extract_text(data, psm=6)))
+    return runs
 
-        with open(img_path, "rb") as f:
-            image_bytes = f.read()
 
-        image_results = {"image": img_path.name, "engines": {}}
+def print_table(rows: list) -> None:
+    col_image = max([len("Image")] + [len(row[0]) for row in rows])
+    col_engine = max([len("Engine")] + [len(row[1]) for row in rows])
 
-        for eng_name, engine in ocr_manager.engines.items():
-            print(f"\n[{eng_name.upper()}] Running OCR extraction...")
-            status = engine.check_ready()
+    print("\n" + "=" * (col_image + col_engine + 26))
+    print("OCR BENCHMARK — CER vs GROUND TRUTH")
+    print("=" * (col_image + col_engine + 26))
+    print(f"{'Image':<{col_image}} | {'Engine':<{col_engine}} | {'CER':>7} | {'Latency':>8}")
+    print("-" * (col_image + col_engine + 26))
+    for image, engine, cer, latency in rows:
+        cer_txt = f"{cer * 100:6.2f}%" if cer is not None else "     —"
+        print(f"{image:<{col_image}} | {engine:<{col_engine}} | {cer_txt} | {latency:6.2f}s")
+    print("-" * (col_image + col_engine + 26))
 
-            if not status.get("ready"):
-                print(f"  ↳ SKIPPED: {status.get('error')}")
-                image_results["engines"][eng_name] = {
-                    "status": "SKIPPED",
-                    "error": status.get("error"),
-                    "latency": 0.0,
-                    "words": 0,
-                    "chars": 0,
-                    "text": ""
-                }
-                continue
 
-            # Measure extraction time
-            start_time = time.perf_counter()
-            ocr_res = engine.extract_text(image_bytes)
-            latency = time.perf_counter() - start_time
-
-            if ocr_res.get("success"):
-                words = ocr_res.get("word_count", 0)
-                chars = ocr_res.get("char_count", 0)
-                text = ocr_res.get("text", "")
-                print(f"  ↳ SUCCESS ({latency:.2f}s) | Words: {words} | Chars: {chars} | Model: {ocr_res.get('model_used')}")
-                print(format_box(f"{eng_name.upper()} EXTRACTED TEXT", text))
-
-                image_results["engines"][eng_name] = {
-                    "status": "SUCCESS",
-                    "latency": latency,
-                    "words": words,
-                    "chars": chars,
-                    "text": text,
-                    "model": ocr_res.get("model_used")
-                }
-            else:
-                err = ocr_res.get("error", "Unknown error")
-                print(f"  ↳ FAILED ({latency:.2f}s): {err}")
-                image_results["engines"][eng_name] = {
-                    "status": "FAILED",
-                    "latency": latency,
-                    "error": err,
-                    "words": 0,
-                    "chars": 0,
-                    "text": ""
-                }
-
-        results.append(image_results)
-
-    # 4. Side-by-Side Benchmark Summary Table
+def run_benchmark() -> None:
     print("\n" + "=" * 80)
-    print("SIDE-BY-SIDE OCR ENGINE BENCHMARK SUMMARY")
+    print("   ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — OCR ENGINE BENCHMARK (CER)")
     print("=" * 80)
-    print(f"{'Image':<22} | {'Engine':<10} | {'Status':<9} | {'Words':<6} | {'Chars':<6} | {'Latency':<8} | {'Model':<20}")
-    print("-" * 88)
 
-    for item in results:
-        img_name = item["image"]
-        for eng, d in item["engines"].items():
-            stat = d["status"]
-            words = str(d["words"]) if stat == "SUCCESS" else "-"
-            chars = str(d["chars"]) if stat == "SUCCESS" else "-"
-            lat = f"{d['latency']:.2f}s" if stat in ("SUCCESS", "FAILED") else "-"
-            model = d.get("model", d.get("error", ""))[:20]
-            print(f"{img_name:<22} | {eng:<10} | {stat:<9} | {words:<6} | {chars:<6} | {lat:<8} | {model:<20}")
-        print("-" * 88)
+    if not SAMPLES_DIR.exists():
+        print(f"\n[ERROR] Samples directory not found: {SAMPLES_DIR}")
+        return
 
-    print("\nBenchmark complete! Switch active engine anytime via OCR_ENGINE in backend/.env")
+    images = sorted(SAMPLES_DIR.glob("*.png"))
+    if not images:
+        print(f"\n[ERROR] No PNG samples in: {SAMPLES_DIR}")
+        print("Run 'python create_samples.py' to generate the sample documents.")
+        return
+
+    print(f"\nSamples ({len(images)}) in {SAMPLES_DIR}:")
+    for img in images:
+        gt_path = img.with_suffix(".txt")
+        gt_state = "ground truth OK" if gt_path.exists() else "MISSING ground truth .txt"
+        print(f"  - {img.name} ({img.stat().st_size / 1024:.1f} KB) [{gt_state}]")
+
+    runs = build_engine_runs()
+    if not runs:
+        print("\n[ERROR] No OCR engine is ready. Configure backend/.env first.")
+        return
+
+    rows = []
+    for img_path in images:
+        gt_path = img_path.with_suffix(".txt")
+        if not gt_path.exists():
+            print(f"\n[SKIP] {img_path.name}: no ground truth file {gt_path.name}")
+            continue
+
+        ground_truth = gt_path.read_text(encoding="utf-8")
+        image_bytes = img_path.read_bytes()
+
+        print("\n" + "-" * 80)
+        print(f"DOCUMENT: {img_path.name}")
+        print("-" * 80)
+
+        for label, extract in runs:
+            start = time.perf_counter()
+            result = extract(image_bytes)
+            latency = time.perf_counter() - start
+
+            if result.get("success"):
+                cer = character_error_rate(ground_truth, result.get("text", ""))
+                rows.append((img_path.name, label, cer, latency))
+                print(f"  {label:<18} CER {cer * 100:6.2f}%  {latency:6.2f}s")
+                if VERBOSE:
+                    print("  " + (result.get("text", "") or "").replace("\n", "\n  "))
+            else:
+                rows.append((img_path.name, label, None, latency))
+                print(f"  {label:<18} FAILED ({latency:6.2f}s): {result.get('error', 'unknown error')}")
+
+    if rows:
+        print_table(rows)
+    else:
+        print("\n[ERROR] No results produced.")
+    print("CER = character errors / reference characters (0.00% = exact match).")
+
 
 if __name__ == "__main__":
-    run_engine_comparison()
+    run_benchmark()
