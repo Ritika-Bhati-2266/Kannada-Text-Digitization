@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 DB_PATH = Path(__file__).resolve().parent / "archive.db"
 _lock = threading.Lock()
+_initialized = False
 
 
 def _connect() -> sqlite3.Connection:
@@ -46,6 +47,16 @@ def init_db() -> None:
             conn.close()
 
 
+def _ensure_db() -> None:
+    """Lazy init: the DB file is only created when a database function is
+    actually called (routes stay 404 and OCR never saves when the archive
+    feature is disabled, so no file is created at all)."""
+    global _initialized
+    if not _initialized:
+        init_db()
+        _initialized = True
+
+
 def save_document(
     filename: str,
     text: str,
@@ -57,6 +68,7 @@ def save_document(
     kannada_share: float = 0.0,
 ) -> Dict[str, Any]:
     """Persist one OCR result. Returns the saved row (with id)."""
+    _ensure_db()
     created_at = datetime.now(timezone.utc).isoformat()
     with _lock:
         conn = _connect()
@@ -88,6 +100,7 @@ def save_document(
 
 
 def get_document(doc_id: int) -> Optional[Dict[str, Any]]:
+    _ensure_db()
     conn = _connect()
     try:
         row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
@@ -99,6 +112,7 @@ def get_document(doc_id: int) -> Optional[Dict[str, Any]]:
 def search_documents(query: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
     """List recent documents, or full-text LIKE search when query is given.
     Returns rows WITHOUT the full text body (preview only) for light payloads."""
+    _ensure_db()
     conn = _connect()
     try:
         if query and query.strip():
@@ -133,6 +147,7 @@ def search_documents(query: Optional[str] = None, limit: int = 50) -> List[Dict[
 
 
 def delete_document(doc_id: int) -> bool:
+    _ensure_db()
     with _lock:
         conn = _connect()
         try:
@@ -144,6 +159,7 @@ def delete_document(doc_id: int) -> bool:
 
 
 def archive_stats() -> Dict[str, Any]:
+    _ensure_db()
     conn = _connect()
     try:
         row = conn.execute(
@@ -152,6 +168,3 @@ def archive_stats() -> Dict[str, Any]:
         return {"doc_count": row["doc_count"], "total_chars": row["total_chars"]}
     finally:
         conn.close()
-
-
-init_db()

@@ -1,6 +1,7 @@
 /* Kannada Lipi Mitra — minimal offline-first service worker.
-   Caches static shell; OCR/API calls always hit the network (POST). */
-const CACHE = 'lipi-mitra-v1';
+   Caches static shell only. /api/* is NEVER cached — API responses always
+   go straight to the network (and are never served from cache). */
+const CACHE = 'lipi-mitra-v2';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -26,11 +27,13 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-  // Never intercept API calls (POST OCR, TTS, etc.) or cross-origin requests
-  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) {
+  const url = new URL(request.url);
+  // Never touch API calls (any method), cross-origin, or anything non-GET:
+  // /api/* responses must never be written to — or read from — the cache.
+  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) {
     return;
   }
-  // Network-first for HTML/API-adjacent GETs, cache fallback
+  // Network-first for same-origin static GETs, cache fallback
   event.respondWith(
     fetch(request)
       .then((res) => {

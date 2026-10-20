@@ -34,6 +34,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _archive_enabled() -> bool:
+    """Archive is opt-in: ENABLE_ARCHIVE must be explicitly truthy (default off)."""
+    return os.getenv("ENABLE_ARCHIVE", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _archive_or_404() -> None:
+    if not _archive_enabled():
+        raise HTTPException(status_code=404, detail="Archive is disabled (set ENABLE_ARCHIVE=true to enable).")
+
+
 class TranslationRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Kannada text to translate")
     target_lang: str = Field(..., pattern="^(en|hi)$", description="Target language: 'en' or 'hi'")
@@ -78,6 +88,7 @@ def health_check():
         "service": "kannada-lipi-mitra-backend",
         "active_engine": active_engine_name,
         "active_engine_ready": active_engine_info.get("ready", False),
+        "archive_enabled": _archive_enabled(),
         "engines": all_status
     }
 
@@ -174,17 +185,18 @@ async def extract_ocr(
         word_count, char_count = count_words_and_chars(combined_text)
         script_stats = analyze_script_distribution(combined_text)
 
-        # Auto-save to searchable archive
-        archive.save_document(
-            filename=file.filename or "document.pdf",
-            text=combined_text,
-            word_count=word_count,
-            char_count=char_count,
-            engine_used=engine_used,
-            model_used=model_used,
-            handwriting=handwriting,
-            kannada_share=script_stats.get("kannada_share", 0.0),
-        )
+        # Auto-save to searchable archive (opt-in via ENABLE_ARCHIVE)
+        if _archive_enabled():
+            archive.save_document(
+                filename=file.filename or "document.pdf",
+                text=combined_text,
+                word_count=word_count,
+                char_count=char_count,
+                engine_used=engine_used,
+                model_used=model_used,
+                handwriting=handwriting,
+                kannada_share=script_stats.get("kannada_share", 0.0),
+            )
 
         return {
             "filename": file.filename,
@@ -214,17 +226,18 @@ async def extract_ocr(
             }
         )
 
-    # Auto-save to searchable archive
-    archive.save_document(
-        filename=file.filename or "document",
-        text=result["text"],
-        word_count=result.get("word_count", 0),
-        char_count=result.get("char_count", 0),
-        engine_used=result.get("engine"),
-        model_used=result.get("model_used"),
-        handwriting=handwriting,
-        kannada_share=(result.get("script_stats") or {}).get("kannada_share", 0.0),
-    )
+    # Auto-save to searchable archive (opt-in via ENABLE_ARCHIVE)
+    if _archive_enabled():
+        archive.save_document(
+            filename=file.filename or "document",
+            text=result["text"],
+            word_count=result.get("word_count", 0),
+            char_count=result.get("char_count", 0),
+            engine_used=result.get("engine"),
+            model_used=result.get("model_used"),
+            handwriting=handwriting,
+            kannada_share=(result.get("script_stats") or {}).get("kannada_share", 0.0),
+        )
 
     return {
         "filename": file.filename,
@@ -286,6 +299,7 @@ def transliterate_kannada(payload: TransliterateRequest):
 @app.get("/api/archive")
 def list_archive(q: Optional[str] = Query(None, description="Optional search query over archived text"), limit: int = Query(50, ge=1, le=200)):
     """List/search the searchable document archive (all previous OCR results)."""
+    _archive_or_404()
     docs = archive.search_documents(query=q, limit=limit)
     stats = archive.archive_stats()
     return {"documents": docs, "stats": stats, "query": q}
@@ -293,6 +307,7 @@ def list_archive(q: Optional[str] = Query(None, description="Optional search que
 @app.get("/api/archive/{doc_id}")
 def get_archive_document(doc_id: int):
     """Fetch a single archived document with full text."""
+    _archive_or_404()
     doc = archive.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found in archive.")
@@ -301,6 +316,7 @@ def get_archive_document(doc_id: int):
 @app.delete("/api/archive/{doc_id}")
 def delete_archive_document(doc_id: int):
     """Delete a document from the archive."""
+    _archive_or_404()
     if not archive.delete_document(doc_id):
         raise HTTPException(status_code=404, detail="Document not found in archive.")
     return {"deleted": True, "id": doc_id}

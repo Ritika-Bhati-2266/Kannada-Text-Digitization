@@ -149,10 +149,14 @@ async function checkBackendHealth() {
     elements.engineBadgeText.textContent = `${state.activeEngine.toUpperCase()}: ${isReady ? 'READY' : 'CONFIG REQUIRED'}`;
     elements.engineStatusBadge.style.color = isReady ? '#34d399' : '#f87171';
     elements.engineStatusBadge.style.borderColor = isReady ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)';
+
+    // Library drawer only exists when the backend opted in (ENABLE_ARCHIVE=true)
+    elements.libraryBtn.style.display = data.archive_enabled ? '' : 'none';
   } catch (err) {
     elements.engineBadgeText.textContent = 'Backend Offline';
     elements.engineStatusBadge.style.color = '#f87171';
     elements.engineStatusBadge.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+    elements.libraryBtn.style.display = 'none';
   }
 }
 
