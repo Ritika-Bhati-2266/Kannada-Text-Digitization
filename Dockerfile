@@ -34,8 +34,12 @@ COPY backend/ backend/
 # backend/main.py resolves the UI at ../frontend/dist (same layout as the repo)
 COPY --from=frontend-build /build/dist frontend/dist/
 
+# Fast mode by default on this image: Render's free CPU can't finish the
+# two-pipeline confidence pass inside the frontend's 60s window.
+# Override with OCR_FAST_MODE=false in the dashboard to restore it.
 ENV PYTHONUNBUFFERED=1 \
     OCR_ENGINE=tesseract \
+    OCR_FAST_MODE=true \
     PORT=8000
 
 EXPOSE 8000
