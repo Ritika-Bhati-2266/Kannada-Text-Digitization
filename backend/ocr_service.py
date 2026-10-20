@@ -858,14 +858,14 @@ class TesseractEngine(BaseOCREngine):
 
             def _run_ocr(processed_img):
                 # image_to_string for text + image_to_data for per-word confidence
-                raw = self.pytesseract.image_to_string(processed_img, lang="kan", config=custom_config)
+                raw = self.pytesseract.image_to_string(processed_img, lang="kan+eng", config=custom_config)
                 clean = strip_zero_width_joiners(raw.strip())
                 stats = analyze_script_distribution(clean)
                 # Mean confidence of recognized word boxes (conf >= 0 filters noise)
                 confidences = []
                 try:
                     data = self.pytesseract.image_to_data(
-                        processed_img, lang="kan", config=custom_config,
+                        processed_img, lang="kan+eng", config=custom_config,
                         output_type=self.pytesseract.Output.DICT
                     )
                     for conf, txt in zip(data.get("conf", []), data.get("text", [])):

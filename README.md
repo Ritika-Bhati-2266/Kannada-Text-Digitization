@@ -236,16 +236,16 @@ Non-Docker alternative: any Python host (Railway, Hugging Face Spaces, PythonAny
 
 | Sample (4 total, 4 generated, 0 real) | Groq (vision LLM) | Tesseract psm 4 | Tesseract psm 6 (default) |
 |---|---|---|---|
-| `sample_circular.png` *(generated)* | 53.56% (48.3s) | **20.75%** (3.49s) | 21.71% (3.18s) |
-| `sample_handwriting.png` *(simulated, not real handwriting)* | 47.06% (16.0s) | **11.03%** (1.17s) | 13.24% (1.36s) |
-| `sample_notice.png` *(generated)* | 49.73% (90.4s) \* | 23.38% (3.20s) | **22.16%** (3.09s) |
-| `sample_textbook.png` *(generated)* | 56.50% (85.9s) \* | **17.62%** (5.66s) | 19.12% (3.23s) |
+| `sample_circular.png` *(generated)* | FAILED (401) (0.9s) | 15.92% (4.12s) | **15.80%** (3.68s) |
+| `sample_handwriting.png` *(simulated, not real handwriting)* | FAILED (401) (0.9s) | **15.44%** (1.32s) | 17.65% (1.40s) |
+| `sample_notice.png` *(generated)* | FAILED (401) (0.7s) | 18.65% (3.50s) | **17.84%** (3.69s) |
+| `sample_textbook.png` *(generated)* | FAILED (401) (0.8s) | **12.00%** (4.10s) | 12.62% (4.13s) |
 
-\* Groq results vary between runs, and free-tier rate limits add long backoffs (visible in the run above) — they can also fail a call outright. On these generated samples the offline default is both **more accurate and far faster**, which is exactly why Tesseract is the default and Groq stays optional. The engine dropdown lets you compare both on your own documents.
+\* **Groq could not be measured in this run:** every call failed with `401 Invalid API Key` (the key needs rotation — an open task). Failures are recorded as failures, not omitted or back-filled. On earlier runs *with a valid key* on these same images Groq scored **47.06–56.50%** CER — but that number is **not** from the run below. On these generated samples the offline default is both more accurate and far faster, which is why Tesseract is the default and Groq stays optional.
 
-**About the numbers above:** Tesseract latencies are higher than in earlier runs of this benchmark because print mode now runs **both** preprocessing variants and keeps the higher-confidence result (confidence is not accuracy — see §6). Groq latencies include 429-rate-limit backoffs. Failures are recorded as failures, not omitted.
+**About the numbers above:** OCR now runs Tesseract with `lang="kan+eng"` (bug fix — `kan` alone mangled Latin codes like `ED-2026-KN-0492/SAMPLE`). Tesseract latencies are higher than in single-pipeline runs because print mode runs **both** preprocessing variants and keeps the higher-confidence result (confidence is not accuracy — see §6).
 
-**Reading these numbers honestly:** best Tesseract CER on this set is **11.03%** (handwriting sample, psm 4) and worst is **23.38%** (notice, psm 4) — i.e. roughly **11–23 characters wrong per 100**. That is usable as a draft transcription aid with the editable pane, **not** as unattended digitization. Groq CER on the same images is **47.06–56.50%**. We publish the bad numbers because hiding them would misrepresent readiness.
+**Reading these numbers honestly:** best Tesseract CER on this set is **12.00%** (textbook, psm 4) and worst is **18.65%** (notice, psm 4) — i.e. roughly **12–19 characters wrong per 100**. Versus the previous `lang="kan"` run: the three printed samples **improved** (circular 20.75%→15.80%, notice 22.16%→17.84%, textbook 17.62%→12.00%) but the handwriting sample got **worse** (11.03%→15.44%). Usable as a draft transcription aid with the editable pane, **not** as unattended digitization. We publish the bad numbers because hiding them would misrepresent readiness.
 
 ## 12. Limitations & Future Scope
 
