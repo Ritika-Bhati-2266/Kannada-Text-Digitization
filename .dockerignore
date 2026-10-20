@@ -25,6 +25,7 @@ frontend/dist/
 backend/ocr_test_results.json
 backend/test_*.png
 backend/test_*.py
+backend/archive.db
 
 # Docs & deploy config not needed inside the image
 docs/

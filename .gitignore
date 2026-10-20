@@ -5,6 +5,9 @@
 .venv/
 venv/
 
+# Local OCR archive (user documents — never commit)
+backend/archive.db
+
 # Python
 __pycache__/
 *.py[cod]

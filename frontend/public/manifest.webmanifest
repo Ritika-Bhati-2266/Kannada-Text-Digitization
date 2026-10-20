@@ -1,0 +1,18 @@
+{
+  "name": "ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — Kannada Lipi Mitra",
+  "short_name": "Lipi Mitra",
+  "description": "Kannada Document AI & High-Fidelity OCR — search, understand and hear Kannada documents.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a233b",
+  "theme_color": "#1a233b",
+  "lang": "kn",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -12,13 +12,14 @@ from dotenv import load_dotenv
 import pypdfium2 as pdfium
 
 from ocr_service import ocr_manager, analyze_script_distribution, count_words_and_chars
+import archive
 
 load_dotenv()
 
 app = FastAPI(
     title="ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ (Kannada Lipi Mitra) API",
-    description="Engine-Agnostic Kannada Document AI, OCR, Translation & Text-to-Speech API",
-    version="2.0.0"
+    description="Engine-Agnostic Kannada Document AI, OCR, Translation, Transliteration & Text-to-Speech API",
+    version="2.1.0"
 )
 
 # CORS configuration
@@ -40,6 +41,19 @@ class TranslationRequest(BaseModel):
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Kannada text to convert to audio")
+
+class TransliterateRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Kannada text to transliterate to Latin")
+
+class ArchiveSaveRequest(BaseModel):
+    filename: str = Field(default="untitled", max_length=300)
+    text: str = Field(..., min_length=1)
+    word_count: int = Field(default=0, ge=0)
+    char_count: int = Field(default=0, ge=0)
+    engine_used: Optional[str] = None
+    model_used: Optional[str] = None
+    handwriting: bool = False
+    kannada_share: float = Field(default=0.0, ge=0.0, le=1.0)
 
 @app.get("/api/info")
 def project_info():
@@ -160,6 +174,18 @@ async def extract_ocr(
         word_count, char_count = count_words_and_chars(combined_text)
         script_stats = analyze_script_distribution(combined_text)
 
+        # Auto-save to searchable archive
+        archive.save_document(
+            filename=file.filename or "document.pdf",
+            text=combined_text,
+            word_count=word_count,
+            char_count=char_count,
+            engine_used=engine_used,
+            model_used=model_used,
+            handwriting=handwriting,
+            kannada_share=script_stats.get("kannada_share", 0.0),
+        )
+
         return {
             "filename": file.filename,
             "text": combined_text,
@@ -187,6 +213,18 @@ async def extract_ocr(
                 "is_rate_limit": result.get("is_rate_limit", False)
             }
         )
+
+    # Auto-save to searchable archive
+    archive.save_document(
+        filename=file.filename or "document",
+        text=result["text"],
+        word_count=result.get("word_count", 0),
+        char_count=result.get("char_count", 0),
+        engine_used=result.get("engine"),
+        model_used=result.get("model_used"),
+        handwriting=handwriting,
+        kannada_share=(result.get("script_stats") or {}).get("kannada_share", 0.0),
+    )
 
     return {
         "filename": file.filename,
@@ -225,6 +263,47 @@ def translate_kannada(payload: TranslationRequest):
         "engine_used": result.get("engine"),
         "model_used": result.get("model_used")
     }
+
+@app.post("/api/transliterate")
+def transliterate_kannada(payload: TransliterateRequest):
+    """
+    Offline Kannada → Latin (ITRANS) transliteration.
+    Runs entirely locally via indic-transliteration — no API key, no network.
+    """
+    try:
+        from indic_transliteration import sanscript
+        from indic_transliteration.sanscript import transliterate as _transliterate
+        latin = _transliterate(payload.text, sanscript.KANNADA, sanscript.ITRANS)
+        return {"transliteration": latin, "scheme": "ITRANS", "engine_used": "indic-transliteration"}
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="indic-transliteration package is not installed. Run: pip install indic-transliteration"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transliteration failed: {str(e)}")
+
+@app.get("/api/archive")
+def list_archive(q: Optional[str] = Query(None, description="Optional search query over archived text"), limit: int = Query(50, ge=1, le=200)):
+    """List/search the searchable document archive (all previous OCR results)."""
+    docs = archive.search_documents(query=q, limit=limit)
+    stats = archive.archive_stats()
+    return {"documents": docs, "stats": stats, "query": q}
+
+@app.get("/api/archive/{doc_id}")
+def get_archive_document(doc_id: int):
+    """Fetch a single archived document with full text."""
+    doc = archive.get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found in archive.")
+    return doc
+
+@app.delete("/api/archive/{doc_id}")
+def delete_archive_document(doc_id: int):
+    """Delete a document from the archive."""
+    if not archive.delete_document(doc_id):
+        raise HTTPException(status_code=404, detail="Document not found in archive.")
+    return {"deleted": True, "id": doc_id}
 
 @app.post("/api/tts")
 def text_to_speech_kannada(payload: TTSRequest):

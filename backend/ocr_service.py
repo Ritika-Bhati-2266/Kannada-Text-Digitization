@@ -736,6 +736,60 @@ class TesseractEngine(BaseOCREngine):
         _, thresh = self.cv2.threshold(denoised, 0, 255, self.cv2.THRESH_BINARY + self.cv2.THRESH_OTSU)
         return thresh
 
+    def _preprocess_realworld(self, image_bytes: bytes):
+        """Scan/photo-tuned pipeline for real-world documents: CLAHE contrast
+        normalization (handles uneven lighting on photographed circulars),
+        bilateral denoise (preserves thin Kannada glyphs), Sauvola-style
+        adaptive threshold (robust to shadows/folds), and deskew."""
+        nparr = self.np.frombuffer(image_bytes, self.np.uint8)
+        img = self.cv2.imdecode(nparr, self.cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("OpenCV failed to decode image bytes.")
+
+        gray = self.cv2.cvtColor(img, self.cv2.COLOR_BGR2GRAY)
+
+        # Upscale harder than standard print — real phone photos of notices are often low-res
+        h, w = gray.shape[:2]
+        if w < 1600:
+            scale = 1600 / float(w)
+            gray = self.cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=self.cv2.INTER_CUBIC)
+
+        # CLAHE evens out shadows / uneven lighting on photographed paper
+        clahe = self.cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+
+        # Bilateral filter: remove paper texture/noise without blurring glyph edges
+        denoised = self.cv2.bilateralFilter(gray, 7, 60, 60)
+
+        # Light unsharp mask to sharpen thin matras (vowel signs) and conjuncts
+        blurred = self.cv2.GaussianBlur(denoised, (0, 0), 2.0)
+        sharpened = self.cv2.addWeighted(denoised, 1.4, blurred, -0.4, 0)
+
+        # Adaptive threshold — handles folds, shadows, and uneven paper tone
+        block = max(15, (min(sharpened.shape[:2]) // 20) | 1)
+        thresh = self.cv2.adaptiveThreshold(
+            sharpened, 255, self.cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            self.cv2.THRESH_BINARY, block, 12
+        )
+
+        # Deskew: real scans/photos are often slightly rotated
+        coords = self.np.column_stack(self.np.where(thresh < 200))
+        if len(coords) >= 5:
+            angle = self.cv2.minAreaRect(coords)[-1]
+            if angle < -45:
+                angle = -(90 + angle)
+            else:
+                angle = -angle
+            if abs(angle) > 0.3 and abs(angle) < 10:
+                (ch, cw) = thresh.shape[:2]
+                matrix = self.cv2.getRotationMatrix2D((cw // 2, ch // 2), angle, 1.0)
+                thresh = self.cv2.warpAffine(
+                    thresh, matrix, (cw, ch),
+                    flags=self.cv2.INTER_CUBIC,
+                    borderMode=self.cv2.BORDER_REPLICATE
+                )
+        return thresh
+
     def _preprocess_handwriting(self, image_bytes: bytes):
         """Handwriting-tuned pipeline: aggressive upscale, CLAHE contrast,
         adaptive threshold (handles uneven pen pressure), deskew, and a light
@@ -843,8 +897,21 @@ class TesseractEngine(BaseOCREngine):
                 mode_label, clean_text, script_stats, _conf = candidates[0]
                 model_suffix = f"psm {psm_value} ({mode_label})"
             else:
-                clean_text, script_stats, _conf = _run_ocr(self._preprocess_image(image_bytes))
-                model_suffix = f"psm {psm_value}"
+                # Multi-variant print mode: standard Otsu + real-world (CLAHE/adaptive/deskew).
+                # Pick by mean word-confidence so clean scans use the fast path and
+                # unevenly-lit photos/scans automatically get the enhanced pipeline.
+                candidates = []
+                for label, prep in (("print", self._preprocess_image), ("realworld", self._preprocess_realworld)):
+                    try:
+                        text, stats, conf = _run_ocr(prep(image_bytes))
+                        candidates.append((label, text, stats, conf))
+                    except Exception as prep_err:
+                        print(f"[TesseractEngine] {label} preprocessing failed: {prep_err}")
+                if not candidates:
+                    raise ValueError("All preprocessing pipelines failed.")
+                candidates.sort(key=lambda c: (c[3] if c[1].strip() else -1.0), reverse=True)
+                mode_label, clean_text, script_stats, _conf = candidates[0]
+                model_suffix = f"psm {psm_value} ({mode_label})"
 
             word_count, char_count = count_words_and_chars(clean_text)
 

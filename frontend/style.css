@@ -1139,3 +1139,158 @@ body {
     color: #000 !important;
   }
 }
+
+/* ==============================================================================
+   12. Document Library Drawer
+   ============================================================================== */
+.library-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 90;
+  backdrop-filter: blur(2px);
+}
+
+.library-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(420px, 92vw);
+  height: 100vh;
+  background: #151c2e;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.5);
+  animation: slideInRight 0.25s ease;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.library-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.library-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #f5f6fa;
+}
+
+.library-title-group h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.library-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.8rem 1.2rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.library-search-input {
+  flex: 1;
+}
+
+.library-stats {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.library-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.6rem 0.8rem 1.2rem;
+}
+
+.library-empty {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.85rem;
+  padding: 2.5rem 1rem;
+  line-height: 1.6;
+}
+
+.library-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  margin-bottom: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.library-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 179, 0, 0.35);
+}
+
+.library-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.library-item-filename {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #f5f6fa;
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.library-item-preview {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.library-item-meta {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  font-size: 0.65rem;
+  color: #64748b;
+}
+
+.library-item-meta .engine-tag {
+  color: #ffb300;
+  font-weight: 600;
+}
+
+.library-item-delete {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.library-item-delete:hover {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.1);
+}

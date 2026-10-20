@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — Kannada Lipi Mitra | Kannada Document AI & OCR</title>
   <meta name="description" content="ಕನ್ನಡ ಲಿಪಿ ಮಿತ್ರ — Engine-Agnostic Kannada Document AI, High-Fidelity OCR, Meaning & Speech Synthesis">
+  <meta name="theme-color" content="#1a233b">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <link rel="apple-touch-icon" href="./icon.svg">
   
   <!-- Google Fonts: Inter & Noto Sans Kannada -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -46,6 +50,12 @@
         <span class="status-dot"></span>
         <span id="engineBadgeText">Checking Engine...</span>
       </div>
+
+      <!-- Quick Action: Library / Archive -->
+      <button class="btn btn-secondary" id="libraryBtn" title="Open searchable document library">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <span>Library</span>
+      </button>
 
       <!-- Quick Action: Print / PDF -->
       <button class="btn btn-secondary print-btn" id="printPdfBtn" title="Print or save as PDF">
@@ -317,6 +327,9 @@
           </span>
 
           <div class="translation-btn-group">
+            <button class="btn btn-outline btn-sm translate-trigger-btn" id="transliterateBtn" title="Offline Kannada → Latin transliteration">
+              Transliterate (Latin)
+            </button>
             <button class="btn btn-outline btn-sm translate-trigger-btn" id="translateEnBtn" data-lang="en">
               English Meaning
             </button>
@@ -340,6 +353,30 @@
       </section>
     </section>
   </main>
+
+  <!-- Document Library Drawer -->
+  <div class="library-overlay" id="libraryOverlay" style="display: none;"></div>
+  <aside class="library-drawer" id="libraryDrawer" aria-label="Document Library" style="display: none;">
+    <div class="library-header">
+      <div class="library-title-group">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <h2>ದಾಖಲಾಲಯ / Document Library</h2>
+      </div>
+      <button class="icon-btn" id="libraryCloseBtn" title="Close library">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="library-search-row">
+      <div class="search-input-wrapper library-search-input">
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="librarySearchInput" placeholder="ಎಲ್ಲಾ ದಾಖಲೆಗಳಲ್ಲಿ ಹುಡುಕಿ / Search all documents...">
+      </div>
+      <span class="library-stats" id="libraryStats">0 documents</span>
+    </div>
+    <div class="library-list" id="libraryList">
+      <p class="library-empty" id="libraryEmptyMsg">ಇನ್ನೂ ಯಾವುದೇ ದಾಖಲೆ ಇಲ್ಲ — OCR ಮಾಡಿದ ನಂತರ ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಇಲ್ಲಿ ಸಂಗ್ರಹವಾಗುತ್ತದೆ.<br><small>No documents yet — OCR results are auto-saved here.</small></p>
+    </div>
+  </aside>
 
   <!-- Toast Notification -->
   <div class="toast" id="toastNotification" role="alert" aria-live="assertive">

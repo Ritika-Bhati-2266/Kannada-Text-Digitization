@@ -9,3 +9,4 @@ gTTS>=2.5.0
 pytesseract>=0.3.10
 opencv-python-headless>=4.10.0
 pypdfium2>=4.30.0
+indic-transliteration>=2.3.0

@@ -111,7 +111,20 @@ const elements = {
   toastMessage: document.getElementById('toastMessage'),
   printHeader: document.getElementById('printHeader'),
   printTimestamp: document.getElementById('printTimestamp'),
-  printMetaInfo: document.getElementById('printMetaInfo')
+  printMetaInfo: document.getElementById('printMetaInfo'),
+
+  // Library Drawer
+  libraryBtn: document.getElementById('libraryBtn'),
+  libraryOverlay: document.getElementById('libraryOverlay'),
+  libraryDrawer: document.getElementById('libraryDrawer'),
+  libraryCloseBtn: document.getElementById('libraryCloseBtn'),
+  librarySearchInput: document.getElementById('librarySearchInput'),
+  libraryList: document.getElementById('libraryList'),
+  libraryEmptyMsg: document.getElementById('libraryEmptyMsg'),
+  libraryStats: document.getElementById('libraryStats'),
+
+  // Transliterate
+  transliterateBtn: document.getElementById('transliterateBtn')
 };
 
 // ==============================================================================
@@ -245,6 +258,15 @@ function bindEvents() {
   elements.translateEnBtn.addEventListener('click', () => requestTranslation('en'));
   elements.translateHiBtn.addEventListener('click', () => requestTranslation('hi'));
   elements.copyTranslationBtn.addEventListener('click', copyTranslationText);
+
+  // Transliterate (offline, local)
+  elements.transliterateBtn.addEventListener('click', requestTransliteration);
+
+  // Library Drawer
+  elements.libraryBtn.addEventListener('click', openLibrary);
+  elements.libraryCloseBtn.addEventListener('click', closeLibrary);
+  elements.libraryOverlay.addEventListener('click', closeLibrary);
+  elements.librarySearchInput.addEventListener('input', debounce(loadLibraryDocuments, 250));
 
   // Error & 429 Actions
   elements.rateLimitRetryBtn.addEventListener('click', executeRetry);
@@ -569,6 +591,148 @@ function copyTranslationText() {
 }
 
 // ==============================================================================
+// 7b. Transliteration (Kannada → Latin, offline)
+// ==============================================================================
+async function requestTransliteration() {
+  const text = elements.kannadaEditor.value.trim();
+  if (!text) {
+    showToast('ದಯವಿಟ್ಟು ಮೊದಲು ಪಠ್ಯವನ್ನು ಒದಗಿಸಿ (No text to transliterate)');
+    return;
+  }
+
+  elements.transliterateBtn.classList.add('active');
+  elements.transliterateBtn.textContent = 'Transliterating...';
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/transliterate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = typeof data.detail === 'object' ? data.detail.message : data.detail;
+      throw new Error(msg || 'Transliteration failed');
+    }
+    elements.translationLangTag.textContent = 'Latin Transliteration (ITRANS)';
+    elements.translationOutputText.textContent = data.transliteration;
+    elements.translationContent.style.display = 'block';
+    showToast('ಲಿಪಿ ಪರಿವರ್ತನೆ ಸಿದ್ಧ (Transliteration ready)');
+  } catch (err) {
+    showGeneralError('Transliteration Error', err.message);
+  } finally {
+    elements.transliterateBtn.classList.remove('active');
+    elements.transliterateBtn.textContent = 'Transliterate (Latin)';
+  }
+}
+
+// ==============================================================================
+// 7c. Document Library (searchable archive)
+// ==============================================================================
+function openLibrary() {
+  elements.libraryOverlay.style.display = 'block';
+  elements.libraryDrawer.style.display = 'flex';
+  loadLibraryDocuments();
+  elements.librarySearchInput.focus();
+}
+
+function closeLibrary() {
+  elements.libraryOverlay.style.display = 'none';
+  elements.libraryDrawer.style.display = 'none';
+}
+
+async function loadLibraryDocuments() {
+  const q = elements.librarySearchInput.value.trim();
+  const url = q
+    ? `${API_BASE_URL}/api/archive?q=${encodeURIComponent(q)}`
+    : `${API_BASE_URL}/api/archive`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const docs = data.documents || [];
+    elements.libraryStats.textContent = `${data.stats?.doc_count ?? docs.length} documents`;
+
+    // Clear list (keep empty message hidden until needed)
+    elements.libraryList.innerHTML = '';
+
+    if (!docs.length) {
+      elements.libraryList.appendChild(elements.libraryEmptyMsg);
+      elements.libraryEmptyMsg.style.display = 'block';
+      if (q) elements.libraryEmptyMsg.innerHTML = `No documents match "<b>${escapeHtml(q)}</b>".`;
+      return;
+    }
+
+    docs.forEach(doc => {
+      const item = document.createElement('div');
+      item.className = 'library-item';
+      item.innerHTML = `
+        <div class="library-item-body">
+          <div class="library-item-filename">${escapeHtml(doc.filename || 'untitled')}</div>
+          <div class="library-item-preview">${escapeHtml(doc.preview || '')}</div>
+          <div class="library-item-meta">
+            <span class="engine-tag">${escapeHtml((doc.engine_used || '—').toUpperCase())}</span>
+            <span>${doc.word_count ?? 0} words</span>
+            <span>${new Date(doc.created_at).toLocaleDateString('en-IN')}</span>
+          </div>
+        </div>
+        <button class="library-item-delete" title="Delete" data-id="${doc.id}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      `;
+
+      // Click item → load full text into editor
+      item.addEventListener('click', async (e) => {
+        if (e.target.closest('.library-item-delete')) return;
+        try {
+          const full = await fetch(`${API_BASE_URL}/api/archive/${doc.id}`);
+          if (!full.ok) throw new Error(`HTTP ${full.status}`);
+          const fullDoc = await full.json();
+          state.extractedText = fullDoc.text || '';
+          state.currentFileName = fullDoc.filename || 'Archived document';
+          elements.kannadaEditor.value = state.extractedText;
+          elements.imageDocName.textContent = `ದಾಖಲಾಲಯ: ${state.currentFileName}`;
+          updateCounters(fullDoc.word_count, fullDoc.char_count);
+          syncSearchHighlights();
+          closeLibrary();
+          showToast('ದಾಖಲೆ ಲೋಡ್ ಆಗಿದೆ (Document loaded from library)');
+        } catch (err) {
+          showToast('ಲೋಡ್ ವಿಫಲ: ' + err.message);
+        }
+      });
+
+      // Delete button
+      item.querySelector('.library-item-delete').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = e.currentTarget.getAttribute('data-id');
+        try {
+          const del = await fetch(`${API_BASE_URL}/api/archive/${id}`, { method: 'DELETE' });
+          if (!del.ok) throw new Error(`HTTP ${del.status}`);
+          loadLibraryDocuments();
+          showToast('ದಾಖಲೆ ಅಳಿಸಲಾಗಿದೆ (Document deleted)');
+        } catch (err) {
+          showToast('Delete failed: ' + err.message);
+        }
+      });
+
+      elements.libraryList.appendChild(item);
+    });
+  } catch (err) {
+    elements.libraryList.innerHTML = `<p class="library-empty">Library unavailable: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+// ==============================================================================
 // 8. Read-Aloud (Text-to-Speech)
 // ==============================================================================
 async function toggleReadAloud() {
@@ -809,3 +973,10 @@ function showToast(message) {
 
 // Start Application
 document.addEventListener('DOMContentLoaded', initApp);
+
+// PWA: register service worker (production/served build only)
+if ('serviceWorker' in navigator && !IS_LOCAL_DEV) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => { /* SW optional */ });
+  });
+}
