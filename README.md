@@ -143,7 +143,6 @@ Kannada/
 │   ├── style.css
 │   ├── public/samples/    # demo documents served at /samples
 │   └── dist/              # production build (served by the backend)
-├── docs/                  # presentation, video script
 ├── Dockerfile             # multi-stage: Node builds frontend → Python+Tesseract runtime
 ├── .dockerignore          # excludes .env, .git, node_modules, __pycache__, …
 ├── render.yaml            # one-click deployment config (Render Docker runtime)
