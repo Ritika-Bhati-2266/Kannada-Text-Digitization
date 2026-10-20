@@ -30,9 +30,10 @@ LINES = [
 ]
 
 
-def render_word(word, font_size):
+def render_word(word, font_size, ink_color):
     """Render a whole word with the Kannada font (keeps conjuncts/shaping intact),
-    then tilt it slightly to mimic handwriting."""
+    then apply random rotation, vertical drift, and slight scale jitter to mimic
+    the irregularity of real handwriting."""
     font = ImageFont.truetype(str(FONT_PATH), font_size)
     pad = font_size // 3
     box = font.getbbox(word)
@@ -40,9 +41,22 @@ def render_word(word, font_size):
     h = font_size + pad * 2
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.text((pad - box[0], pad), word, font=font, fill=INK + (255,))
-    angle = random.uniform(-4, 4)
-    return img.rotate(angle, resample=Image.BICUBIC, expand=True)
+    d.text((pad - box[0], pad), word, font=font, fill=ink_color + (255,))
+    # Wider slant range than before for a more hand-drawn feel
+    angle = random.uniform(-7, 7)
+    img = img.rotate(angle, resample=Image.BICUBIC, expand=True)
+    # Subtle scale jitter (±4%) — handwriting never keeps identical letter size
+    scale = random.uniform(0.96, 1.04)
+    if abs(scale - 1.0) > 0.01:
+        new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+        img = img.resize(new_size, Image.LANCZOS)
+    return img
+
+
+def random_ink():
+    """Slight pen-pressure / ink-density variation per word."""
+    drift = random.randint(-12, 8)
+    return tuple(max(20, min(80, c + drift)) for c in INK)
 
 
 def main():
@@ -58,21 +72,33 @@ def main():
 
     y = 70
     for line in LINES:
-        x = 110 + random.randint(-4, 8)
+        x = 110 + random.randint(-6, 10)
+        # Per-line baseline drift — handwriting rarely sits perfectly level
+        line_drift = random.randint(-4, 4)
         if line:
             for word in line.split(" "):
-                size = random.randint(36, 41)
-                glyph = render_word(word, size)
-                gy = y + random.randint(-3, 3)
+                size = random.randint(35, 43)
+                glyph = render_word(word, size, random_ink())
+                gy = y + line_drift + random.randint(-5, 5)
                 paper.paste(glyph, (int(x), int(gy)), glyph)
-                x += glyph.width + random.randint(8, 14)
+                x += glyph.width + random.randint(6, 18)
         y += 92
 
-    # Slight paper texture: random specks
-    for _ in range(350):
+    # Paper texture: random specks + faint smudge patches
+    for _ in range(400):
         px, py = random.randint(0, W - 1), random.randint(0, H - 1)
-        c = random.randint(205, 230)
+        c = random.randint(200, 232)
         paper.putpixel((px, py), (c, c - 5, c - 15))
+    for _ in range(6):
+        cx, cy = random.randint(80, W - 80), random.randint(50, H - 50)
+        cr = random.randint(8, 22)
+        for ox in range(-cr, cr + 1):
+            for oy in range(-cr, cr + 1):
+                if ox * ox + oy * oy <= cr * cr:
+                    nx, ny = cx + ox, cy + oy
+                    if 0 <= nx < W and 0 <= ny < H:
+                        r, g, b = paper.getpixel((nx, ny))
+                        paper.putpixel((nx, ny), (max(0, r - 6), max(0, g - 6), max(0, b - 8)))
 
     for out in OUT_PATHS:
         out.parent.mkdir(parents=True, exist_ok=True)

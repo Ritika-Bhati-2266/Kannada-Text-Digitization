@@ -22,6 +22,7 @@ const state = {
   isTtsLoading: false,
   isPlayingAudio: false,
   selectedEngine: '', // '' = Auto (backend default: Tesseract)
+  handwritingMode: false, // handwriting-tuned OCR pipeline
   lastAction: null, // For retry on error / 429
   retryTimer: null,
   activeSample: null
@@ -35,6 +36,7 @@ const elements = {
   cameraUploadInput: document.getElementById('cameraUploadInput'),
   uploadBtn: document.getElementById('uploadBtn'),
   cameraBtn: document.getElementById('cameraBtn'),
+  handwritingModeToggle: document.getElementById('handwritingModeToggle'),
   samplePills: document.querySelectorAll('.sample-pill'),
 
   // Alerts & Banners
@@ -198,6 +200,18 @@ function bindEvents() {
       : 'OCR engine: Auto (backend default: Tesseract)');
   });
 
+  // Handwriting Mode Toggle
+  elements.handwritingModeToggle.addEventListener('change', () => {
+    state.handwritingMode = elements.handwritingModeToggle.checked;
+    showToast(state.handwritingMode
+      ? 'Handwriting mode ON — adaptive preprocessing enabled'
+      : 'Handwriting mode OFF — standard print OCR');
+    // Re-run OCR on current file if one is loaded
+    if (state.currentFile && !state.isOcrLoading) {
+      triggerOcrExtraction(state.currentFile);
+    }
+  });
+
   // Image Zoom Controls
   elements.zoomInBtn.addEventListener('click', () => adjustZoom(0.2));
   elements.zoomOutBtn.addEventListener('click', () => adjustZoom(-0.2));
@@ -291,6 +305,15 @@ async function loadSampleDocument(filename, title, pillElement) {
   state.currentFileName = `SAMPLE (generated): ${title}`;
   elements.imageDocName.textContent = state.currentFileName;
 
+  // Auto-enable handwriting mode for the handwriting sample
+  if (filename === 'sample_handwriting.png') {
+    state.handwritingMode = true;
+    elements.handwritingModeToggle.checked = true;
+  } else if (state.handwritingMode) {
+    state.handwritingMode = false;
+    elements.handwritingModeToggle.checked = false;
+  }
+
   const sampleUrl = `/samples/${filename}`;
 
   try {
@@ -346,8 +369,11 @@ async function triggerOcrExtraction(file) {
   const formData = new FormData();
   formData.append('file', file);
 
-  const ocrUrl = state.selectedEngine
-    ? `${API_BASE_URL}/api/ocr?engine=${encodeURIComponent(state.selectedEngine)}`
+  const queryParams = [];
+  if (state.selectedEngine) queryParams.push(`engine=${encodeURIComponent(state.selectedEngine)}`);
+  if (state.handwritingMode) queryParams.push('handwriting=true');
+  const ocrUrl = queryParams.length
+    ? `${API_BASE_URL}/api/ocr?${queryParams.join('&')}`
     : `${API_BASE_URL}/api/ocr`;
 
   try {

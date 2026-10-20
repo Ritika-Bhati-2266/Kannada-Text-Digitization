@@ -365,6 +365,73 @@ body {
   gap: 0.75rem;
 }
 
+/* Handwriting mode toggle */
+.handwriting-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.handwriting-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.handwriting-toggle input:checked + .toggle-track {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: #f59e0b;
+}
+
+.handwriting-toggle input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(16px);
+  background: #f59e0b;
+}
+
+.handwriting-toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: color 0.2s ease;
+}
+
+.handwriting-toggle input:checked ~ .toggle-label {
+  color: #f59e0b;
+}
+
 .samples-picker-group {
   display: flex;
   align-items: center;

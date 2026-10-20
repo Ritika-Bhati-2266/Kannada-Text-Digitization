@@ -40,6 +40,24 @@ KANNADA_OCR_RETRY_PROMPT = (
     "Output ONLY the exact transcribed text in authentic Kannada Unicode directly."
 )
 
+KANNADA_HANDWRITING_PROMPT = (
+    "You are an expert Kannada handwriting recognizer.\n"
+    "The image contains HANDWRITTEN Kannada text (pen on paper, possibly with slant, "
+    "irregular spacing, connected strokes, or light pressure).\n\n"
+    "CRITICAL HANDWRITING RULES:\n"
+    "1. Transcribe in authentic Kannada Unicode characters ONLY (U+0C80 to U+0CFF).\n"
+    "2. Handwritten Kannada often has fused/merged aksharas — reconstruct the intended "
+    "consonant+vowel combinations carefully (e.g. ಕ + ಿ = ಕಿ, conjuncts like ಕ್ಷ, ಜ್ಞ).\n"
+    "3. Watch for matras (vowel signs) written above/below/around the base letter — "
+    "they are part of the same akshara, not separate characters.\n"
+    "4. NEVER output Devanagari or Latin transliteration. Preserve Latin only for "
+    "printed English words, codes, or dates actually visible in the image.\n"
+    "5. NEVER invent text. Transcribe ONLY visible characters in reading order.\n"
+    "6. For unclear, smudged, or broken pen strokes write [illegible].\n"
+    "7. Preserve line breaks as written. Do not normalize or reorder lines.\n"
+    "8. Output ONLY the transcribed text — no greetings, no markdown fences, no explanations."
+)
+
 def analyze_script_distribution(text: str) -> Dict[str, Any]:
     """
     Counts characters per script:
@@ -244,7 +262,7 @@ class BaseOCREngine(ABC):
         pass
 
     @abstractmethod
-    def extract_text(self, image_bytes: bytes) -> Dict[str, Any]:
+    def extract_text(self, image_bytes: bytes, handwriting: bool = False) -> Dict[str, Any]:
         """Extracts Kannada Unicode text from image bytes."""
         pass
 
@@ -311,7 +329,7 @@ class GroqEngine(BaseOCREngine):
             "base_url": self.base_url
         }
 
-    def extract_text(self, image_bytes: bytes) -> Dict[str, Any]:
+    def extract_text(self, image_bytes: bytes, handwriting: bool = False) -> Dict[str, Any]:
         ready = self.check_ready()
         if not ready["ready"]:
             return {"success": False, "error": ready["error"], "status_code": 400, "engine": self.engine_name}
@@ -327,6 +345,7 @@ class GroqEngine(BaseOCREngine):
             mime_type = "image/webp"
 
         image_data_uri = f"data:{mime_type};base64,{base64_img}"
+        ocr_prompt = KANNADA_HANDWRITING_PROMPT if handwriting else KANNADA_OCR_PROMPT
 
         endpoint = f"{self.base_url}/chat/completions"
         headers = {
@@ -341,7 +360,7 @@ class GroqEngine(BaseOCREngine):
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": KANNADA_OCR_PROMPT},
+                            {"type": "text", "text": ocr_prompt},
                             {"type": "image_url", "image_url": {"url": uri}}
                         ]
                     }
@@ -718,20 +737,116 @@ class TesseractEngine(BaseOCREngine):
         _, thresh = self.cv2.threshold(denoised, 0, 255, self.cv2.THRESH_BINARY + self.cv2.THRESH_OTSU)
         return thresh
 
-    def extract_text(self, image_bytes: bytes, psm: Optional[int] = None) -> Dict[str, Any]:
+    def _preprocess_handwriting(self, image_bytes: bytes):
+        """Handwriting-tuned pipeline: aggressive upscale, CLAHE contrast,
+        adaptive threshold (handles uneven pen pressure), deskew, and a light
+        morphological close to reconnect broken pen strokes."""
+        nparr = self.np.frombuffer(image_bytes, self.np.uint8)
+        img = self.cv2.imdecode(nparr, self.cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("OpenCV failed to decode image bytes.")
+
+        gray = self.cv2.cvtColor(img, self.cv2.COLOR_BGR2GRAY)
+
+        # Handwritten notes are often small phone photos — upscale harder than print mode
+        h, w = gray.shape[:2]
+        if w < 1600:
+            scale = 1600 / float(w)
+            gray = self.cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=self.cv2.INTER_CUBIC)
+
+        # CLAHE evens out light/pale pen strokes against paper
+        clahe = self.cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+
+        # Light denoise — handwriting has thin strokes we must not erase
+        denoised = self.cv2.bilateralFilter(gray, 5, 50, 50)
+
+        # Adaptive Gaussian threshold copes with uneven lighting/pressure far
+        # better than Otsu for handwriting
+        block = max(15, (min(denoised.shape[:2]) // 16) | 1)
+        thresh = self.cv2.adaptiveThreshold(
+            denoised, 255, self.cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            self.cv2.THRESH_BINARY_INV, block, 12
+        )
+
+        # Deskew: rotate to make text lines horizontal again
+        coords = self.np.column_stack(self.np.where(thresh > 0))
+        if len(coords) >= 5:
+            angle = self.cv2.minAreaRect(coords)[-1]
+            if angle < -45:
+                angle = -(90 + angle)
+            else:
+                angle = -angle
+            if abs(angle) > 0.3 and abs(angle) < 15:
+                (ch, cw) = thresh.shape[:2]
+                matrix = self.cv2.getRotationMatrix2D((cw // 2, ch // 2), angle, 1.0)
+                thresh = self.cv2.warpAffine(
+                    thresh, matrix, (cw, ch),
+                    flags=self.cv2.INTER_CUBIC,
+                    borderMode=self.cv2.BORDER_REPLICATE
+                )
+
+        # Morphological close reconnects broken pen strokes without fattening glyphs much
+        kernel = self.cv2.getStructuringElement(self.cv2.MORPH_RECT, (2, 2))
+        thresh = self.cv2.morphologyEx(thresh, self.cv2.MORPH_CLOSE, kernel)
+
+        # Tesseract expects white text on black for OCR of binary images;
+        # invert back so glyphs are dark on light
+        return self.cv2.bitwise_not(thresh)
+
+    def extract_text(self, image_bytes: bytes, psm: Optional[int] = None, handwriting: bool = False) -> Dict[str, Any]:
         ready = self.check_ready()
         if not ready["ready"]:
             return {"success": False, "error": ready["error"], "status_code": 400, "engine": self.engine_name}
 
         try:
-            processed_img = self._preprocess_image(image_bytes)
-            # Custom tesseract config for Indic text
             psm_value = self.default_psm if psm is None else int(psm)
             custom_config = f"--oem 1 --psm {psm_value}"
-            raw_text = self.pytesseract.image_to_string(processed_img, lang="kan", config=custom_config)
 
-            clean_text = strip_zero_width_joiners(raw_text.strip())
-            script_stats = analyze_script_distribution(clean_text)
+            def _run_ocr(processed_img):
+                # image_to_string for text + image_to_data for per-word confidence
+                raw = self.pytesseract.image_to_string(processed_img, lang="kan", config=custom_config)
+                clean = strip_zero_width_joiners(raw.strip())
+                stats = analyze_script_distribution(clean)
+                # Mean confidence of recognized word boxes (conf >= 0 filters noise)
+                confidences = []
+                try:
+                    data = self.pytesseract.image_to_data(
+                        processed_img, lang="kan", config=custom_config,
+                        output_type=self.pytesseract.Output.DICT
+                    )
+                    for conf, txt in zip(data.get("conf", []), data.get("text", [])):
+                        try:
+                            c = float(conf)
+                        except (TypeError, ValueError):
+                            continue
+                        if c >= 0 and (txt or "").strip():
+                            confidences.append(c)
+                except Exception:
+                    pass
+                mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
+                return clean, stats, mean_conf
+
+            if handwriting:
+                # Run BOTH pipelines; pick by Tesseract mean word-confidence —
+                # a reliable proxy for which preprocessing produced cleaner glyphs.
+                candidates = []
+                for label, prep in (("handwriting", self._preprocess_handwriting), ("print", self._preprocess_image)):
+                    try:
+                        text, stats, conf = _run_ocr(prep(image_bytes))
+                        candidates.append((label, text, stats, conf))
+                    except Exception as prep_err:
+                        print(f"[TesseractEngine] {label} preprocessing failed: {prep_err}")
+                if not candidates:
+                    raise ValueError("All preprocessing pipelines failed.")
+                # Highest mean confidence wins; require some text to exist
+                candidates.sort(key=lambda c: (c[3] if c[1].strip() else -1.0), reverse=True)
+                mode_label, clean_text, script_stats, _conf = candidates[0]
+                model_suffix = f"psm {psm_value} ({mode_label})"
+            else:
+                clean_text, script_stats, _conf = _run_ocr(self._preprocess_image(image_bytes))
+                model_suffix = f"psm {psm_value}"
+
             word_count, char_count = count_words_and_chars(clean_text)
 
             return {
@@ -740,7 +855,7 @@ class TesseractEngine(BaseOCREngine):
                 "word_count": word_count,
                 "char_count": char_count,
                 "engine": self.engine_name,
-                "model_used": f"tesseract-kan (psm {psm_value})",
+                "model_used": f"tesseract-kan ({model_suffix})",
                 "warning": script_stats.get("warning"),
                 "script_stats": script_stats
             }
@@ -829,13 +944,17 @@ class UnifiedOCRManager:
             print(f"[UnifiedOCRManager] Tesseract cross-check skipped: {check_err}")
             return []
 
-    def extract_text(self, image_bytes: bytes, engine_name: Optional[str] = None) -> Dict[str, Any]:
+    def extract_text(self, image_bytes: bytes, engine_name: Optional[str] = None, handwriting: bool = False) -> Dict[str, Any]:
         engine = self.get_engine(engine_name)
-        result = engine.extract_text(image_bytes)
+        result = engine.extract_text(image_bytes, handwriting=handwriting)
         if result.get("success"):
             ocr_warnings = []
             if result.get("engine") == "groq":
                 ocr_warnings.extend(self._crosscheck_with_tesseract(result, image_bytes))
+            if handwriting:
+                ocr_warnings.append(
+                    "Handwriting mode active — accuracy is lower than printed text; please verify the transcription."
+                )
             result["ocr_warnings"] = ocr_warnings
         return result
 

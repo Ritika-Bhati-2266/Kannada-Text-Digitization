@@ -95,12 +95,14 @@ def _render_pdf_to_images(contents: bytes, max_pages: int = MAX_PDF_PAGES):
 @app.post("/api/ocr")
 async def extract_ocr(
     file: UploadFile = File(...),
-    engine: Optional[str] = Query(None, description="Optional OCR engine override: groq | tesseract")
+    engine: Optional[str] = Query(None, description="Optional OCR engine override: groq | tesseract"),
+    handwriting: bool = Query(False, description="Enable handwriting-tuned preprocessing & prompts")
 ):
     """
     Receives a document image file (PNG/JPG/WEBP/BMP) OR a multi-page PDF
     and extracts Kannada Unicode text using the active or specified OCR engine.
     PDFs are rendered page-by-page (up to 10 pages) and transcribed with page markers.
+    Set handwriting=true for handwritten notes (uses adaptive preprocessing + handwriting prompt).
     """
     allowed_types = ["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff", "application/pdf"]
     if file.content_type and file.content_type.lower() not in allowed_types:
@@ -135,7 +137,7 @@ async def extract_ocr(
         warnings = []
         ocr_warnings = []
         for page_no, image_bytes in pages:
-            result = ocr_manager.extract_text(image_bytes, engine_name=engine)
+            result = ocr_manager.extract_text(image_bytes, engine_name=engine, handwriting=handwriting)
             if not result["success"]:
                 raise HTTPException(
                     status_code=result.get("status_code", 500),
@@ -173,7 +175,7 @@ async def extract_ocr(
         }
 
     # ── Single-image path ──
-    result = ocr_manager.extract_text(contents, engine_name=engine)
+    result = ocr_manager.extract_text(contents, engine_name=engine, handwriting=handwriting)
 
     if not result["success"]:
         status_code = result.get("status_code", 500)
