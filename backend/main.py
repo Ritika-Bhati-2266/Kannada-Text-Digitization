@@ -90,6 +90,7 @@ def health_check():
         "active_engine": active_engine_name,
         "active_engine_ready": active_engine_info.get("ready", False),
         "archive_enabled": _archive_enabled(),
+        "ocr_fast_mode": os.getenv("OCR_FAST_MODE", "false").strip().lower() in ("1", "true", "yes", "on"),
         "build": os.getenv("RENDER_GIT_COMMIT", "local")[:7],
         "tesseract_lang": TESSERACT_LANG,
         "engines": all_status

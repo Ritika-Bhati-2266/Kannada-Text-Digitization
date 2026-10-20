@@ -617,6 +617,9 @@ class TesseractEngine(BaseOCREngine):
             self.default_psm = int(os.getenv("TESSERACT_PSM", "6"))
         except ValueError:
             self.default_psm = 6
+        # OCR_FAST_MODE=true: print mode runs one Otsu pipeline, one
+        # image_to_string call, no confidence (image_to_data) pass.
+        self.fast_mode = os.getenv("OCR_FAST_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
         self._pytesseract_available = False
         self._cv2_available = False
 
@@ -884,6 +887,12 @@ class TesseractEngine(BaseOCREngine):
                 mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
                 return clean, stats, mean_conf
 
+            def _run_ocr_fast(processed_img):
+                # OCR_FAST_MODE: single image_to_string call, no confidence pass
+                raw = self.pytesseract.image_to_string(processed_img, lang=TESSERACT_LANG, config=custom_config)
+                clean = strip_zero_width_joiners(raw.strip())
+                return clean, analyze_script_distribution(clean)
+
             if handwriting:
                 # Run BOTH pipelines; pick by Tesseract mean word-confidence —
                 # a reliable proxy for which preprocessing produced cleaner glyphs.
@@ -900,6 +909,10 @@ class TesseractEngine(BaseOCREngine):
                 candidates.sort(key=lambda c: (c[3] if c[1].strip() else -1.0), reverse=True)
                 mode_label, clean_text, script_stats, _conf = candidates[0]
                 model_suffix = f"psm {psm_value} ({mode_label})"
+            elif self.fast_mode:
+                # OCR_FAST_MODE: single Otsu pipeline, one image_to_string, no confidence pick
+                clean_text, script_stats = _run_ocr_fast(self._preprocess_image(image_bytes))
+                model_suffix = f"psm {psm_value} (print-fast)"
             else:
                 # Multi-variant print mode: standard Otsu + real-world (CLAHE/adaptive/deskew).
                 # Pick by mean word-confidence so clean scans use the fast path and
