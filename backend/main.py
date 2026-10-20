@@ -1,5 +1,6 @@
 import os
 import io
+import subprocess
 from typing import Optional
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response, Query
@@ -11,7 +12,7 @@ from gtts import gTTS
 from dotenv import load_dotenv
 import pypdfium2 as pdfium
 
-from ocr_service import ocr_manager, analyze_script_distribution, count_words_and_chars
+from ocr_service import ocr_manager, analyze_script_distribution, count_words_and_chars, TESSERACT_LANG
 import archive
 
 load_dotenv()
@@ -89,8 +90,24 @@ def health_check():
         "active_engine": active_engine_name,
         "active_engine_ready": active_engine_info.get("ready", False),
         "archive_enabled": _archive_enabled(),
+        "build": os.getenv("RENDER_GIT_COMMIT", "local")[:7],
+        "tesseract_lang": TESSERACT_LANG,
         "engines": all_status
     }
+
+
+@app.on_event("startup")
+def _log_tesseract_version() -> None:
+    """Log the tesseract binary version at startup (build/runtime diagnostics)."""
+    cmd = os.getenv("TESSERACT_CMD", "").strip() or "tesseract"
+    try:
+        result = subprocess.run(
+            [cmd, "--version"], capture_output=True, text=True, timeout=15
+        )
+        first_line = ((result.stdout or "") + (result.stderr or "")).strip().splitlines()
+        print(f"[startup] tesseract --version: {first_line[0] if first_line else 'no output'}")
+    except Exception as exc:
+        print(f"[startup] tesseract --version failed: {exc}")
 
 MAX_PDF_PAGES = 10
 PDF_RENDER_SCALE = 2.0
