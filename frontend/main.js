@@ -294,21 +294,64 @@ function isPdfFile(file) {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 }
 
-function handleFileSelection(file) {
+// Phone photos are often 8-12MP JPEGs. Downscale the longest side to
+// MAX_UPLOAD_DIMENSION before upload so OCR and preview stay fast.
+// PNG / PDF / small images are sent untouched; any failure falls back to
+// the original file.
+const MAX_UPLOAD_DIMENSION = 2000;
+
+async function prepareFileForUpload(file) {
+  if (!file || file.type !== 'image/jpeg') return file;
+
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const longest = Math.max(bitmap.width, bitmap.height);
+
+    if (longest <= MAX_UPLOAD_DIMENSION) {
+      bitmap.close();
+      return file;
+    }
+
+    const scale = MAX_UPLOAD_DIMENSION / longest;
+    const targetW = Math.max(1, Math.round(bitmap.width * scale));
+    const targetH = Math.max(1, Math.round(bitmap.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas 2D context unavailable');
+    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    bitmap.close();
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!blob) return file;
+
+    const baseName = (file.name || 'photo').replace(/\.[^/.]+$/, '') || 'photo';
+    return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
+  } catch (err) {
+    return file;
+  }
+}
+
+async function handleFileSelection(file) {
   if (!file.type.startsWith('image/') && !isPdfFile(file)) {
     showGeneralError('ಅಮಾನ್ಯ ಕಡತ / Invalid File', 'Please select a valid image file (PNG, JPG, WEBP) or a PDF document.');
     return;
   }
 
   dismissErrors();
-  state.currentFile = file;
-  state.currentFileName = file.name;
-  elements.imageDocName.textContent = file.name;
+
+  const preparedFile = await prepareFileForUpload(file);
+
+  state.currentFile = preparedFile;
+  state.currentFileName = preparedFile.name;
+  elements.imageDocName.textContent = preparedFile.name;
 
   // Unset active sample badge
   elements.samplePills.forEach(p => p.classList.remove('active'));
 
-  if (isPdfFile(file)) {
+  if (isPdfFile(preparedFile)) {
     showPdfPreview();
   } else {
     // Display image preview
@@ -316,11 +359,11 @@ function handleFileSelection(file) {
     reader.onload = (e) => {
       showPreviewImage(e.target.result);
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(preparedFile);
   }
 
   // Trigger OCR extraction
-  triggerOcrExtraction(file);
+  triggerOcrExtraction(preparedFile);
 }
 
 async function loadSampleDocument(filename, title, pillElement) {
