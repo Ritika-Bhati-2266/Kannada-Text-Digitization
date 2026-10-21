@@ -1070,13 +1070,13 @@ body {
   }
 
   /* Translation panel: printed only when it actually holds content.
-     #translationContent carries inline display:block when a translation /
-     transliteration is shown, and display:none when unused. */
+     main.js toggles .has-content via setTranslationPanelVisible() together
+     with the inline style on #translationContent. */
   .translation-panel {
     display: none !important;
   }
 
-  .translation-panel:has(.translation-content[style*="display: block"]) {
+  .translation-panel.has-content {
     display: block !important;
     background: transparent !important;
     padding: 1rem 0 !important;

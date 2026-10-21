@@ -99,6 +99,7 @@ const elements = {
   audioModeBadge: document.getElementById('audioModeBadge'),
 
   // Translation Panel
+  translationPanel: document.querySelector('.translation-panel'),
   translateEnBtn: document.getElementById('translateEnBtn'),
   translateHiBtn: document.getElementById('translateHiBtn'),
   translationContent: document.getElementById('translationContent'),
@@ -504,7 +505,7 @@ async function triggerOcrExtraction(file) {
       : 'ಲಿಪಿ ಯಶಸ್ವಿಯಾಗಿ ಹೊರತೆಗೆಯಲಾಗಿದೆ (OCR Complete)');
 
     // Reset translation panel for new document
-    elements.translationContent.style.display = 'none';
+    setTranslationPanelVisible(false);
     elements.translateEnBtn.classList.remove('active');
     elements.translateHiBtn.classList.remove('active');
 
@@ -593,6 +594,14 @@ function updateCounters(words, chars) {
 // ==============================================================================
 // 7. Meaning on Demand (English / Hindi Translation)
 // ==============================================================================
+// Single place that shows/hides the translation output. Keeps the inline style
+// (screen) and the .has-content class (used by @media print to include the
+// panel only when it actually holds text) in sync.
+function setTranslationPanelVisible(visible) {
+  elements.translationContent.style.display = visible ? 'block' : 'none';
+  elements.translationPanel.classList.toggle('has-content', !!visible);
+}
+
 async function requestTranslation(targetLang) {
   const text = elements.kannadaEditor.value.trim();
   if (!text) {
@@ -642,7 +651,7 @@ async function requestTranslation(targetLang) {
     dismissErrors();
     elements.translationLangTag.textContent = isEn ? 'English Meaning' : 'हिन्दी Meaning';
     elements.translationOutputText.textContent = data.translation;
-    elements.translationContent.style.display = 'block';
+    setTranslationPanelVisible(true);
     showToast(`${isEn ? 'English' : 'Hindi'} translation ready`);
 
   } catch (err) {
@@ -693,7 +702,7 @@ async function requestTransliteration() {
     }
     elements.translationLangTag.textContent = 'Latin Transliteration (ITRANS)';
     elements.translationOutputText.textContent = data.transliteration;
-    elements.translationContent.style.display = 'block';
+    setTranslationPanelVisible(true);
     showToast('ಲಿಪಿ ಪರಿವರ್ತನೆ ಸಿದ್ಧ (Transliteration ready)');
   } catch (err) {
     showGeneralError('Transliteration Error', err.message);
