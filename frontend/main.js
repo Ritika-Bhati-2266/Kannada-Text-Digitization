@@ -203,6 +203,7 @@ function bindEvents() {
   // Sample Documents Quick Picker
   elements.samplePills.forEach(pill => {
     pill.addEventListener('click', () => {
+      if (state.isOcrLoading) return;
       const filename = pill.getAttribute('data-filename');
       const title = pill.getAttribute('data-title');
       loadSampleDocument(filename, title, pill);
@@ -386,6 +387,7 @@ function showPdfPreview() {
 // ==============================================================================
 async function triggerOcrExtraction(file) {
   state.isOcrLoading = true;
+  setOcrControlsLocked(true);
   state.lastAction = () => triggerOcrExtraction(file);
   const loadingSub = isPdfFile(file)
     ? 'Rendering PDF pages & extracting Kannada text...'
@@ -402,9 +404,9 @@ async function triggerOcrExtraction(file) {
     ? `${API_BASE_URL}/api/ocr?${queryParams.join('&')}`
     : `${API_BASE_URL}/api/ocr`;
 
-  // Abort if the backend doesn't answer in 60s (Render free tier can hang)
+  // Abort if the backend doesn't answer in 240s (Render free tier OCR takes 1-3 min)
   const controller = new AbortController();
-  const ocrTimeoutId = setTimeout(() => controller.abort(), 60000);
+  const ocrTimeoutId = setTimeout(() => controller.abort(), 240000);
 
   try {
     const res = await fetch(ocrUrl, {
@@ -466,14 +468,22 @@ async function triggerOcrExtraction(file) {
   } catch (err) {
     hideOcrLoading();
     if (err.name === 'AbortError') {
-      showGeneralError('OCR Timed Out', 'No response in 60s. Retry, or check the Render service logs.');
+      showGeneralError('OCR Timed Out', 'No response in 240s. Retry, or check the Render service logs.');
     } else {
       showGeneralError('OCR Extraction Failed', err.message);
     }
   } finally {
     clearTimeout(ocrTimeoutId);
     state.isOcrLoading = false;
+    setOcrControlsLocked(false);
   }
+}
+
+// Keep sample buttons and Retry disabled while an OCR request is in flight
+function setOcrControlsLocked(locked) {
+  elements.samplePills.forEach(pill => { pill.disabled = locked; });
+  elements.errorRetryBtn.disabled = locked;
+  elements.rateLimitRetryBtn.disabled = locked;
 }
 
 // ==============================================================================
@@ -976,6 +986,7 @@ function dismissErrors() {
 }
 
 function executeRetry() {
+  if (state.isOcrLoading) return;
   dismissErrors();
   if (typeof state.lastAction === 'function') {
     state.lastAction();

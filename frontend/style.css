@@ -692,6 +692,12 @@ body {
   color: var(--text-muted);
 }
 
+.loading-text .loading-hint {
+  margin-top: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--accent-gold);
+}
+
 /* ==============================================================================
    7. Right Pane: Kannada Editor & Search
    ============================================================================== */

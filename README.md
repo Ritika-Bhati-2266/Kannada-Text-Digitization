@@ -219,6 +219,8 @@ Interactive docs: `/docs` (Swagger UI).
 
 The repo ships with **`render.yaml`** — on [Render](https://render.com): *New → Blueprint*, point at the GitHub repo. The service uses Render's **Docker runtime** (`runtime: docker`, `dockerfilePath: ./Dockerfile`). The multi-stage `Dockerfile` builds the Vite frontend on Node, then copies `frontend/dist` into a `python:3.12-slim` image that installs **Tesseract and its Kannada language data** (`tesseract-ocr-kan`, language code **`kan`**). FastAPI runs uvicorn on `$PORT` and serves both API and UI at one URL; `GET /api/health` is the health check. The default engine is Tesseract — **no API keys at all**. To enable the optional Groq engine, set `GROQ_API_KEY` (and `OCR_ENGINE=groq`) in the service dashboard.
 
+On Render's free plan OCR takes about 2 minutes per document (measured); locally it takes a few seconds.
+
 `.dockerignore` keeps `.env`, `.git`, `node_modules`, and `__pycache__` out of the build context. No secrets in the Dockerfile or `render.yaml` — pass `GROQ_API_KEY` (and optionally `OCR_ENGINE`) at runtime. Local Docker:
 
 ```bash
