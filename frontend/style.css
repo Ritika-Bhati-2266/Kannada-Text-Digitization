@@ -1052,10 +1052,52 @@ body {
   .zoom-controls,
   .in-text-search-container,
   .tts-player-bar,
-  .translation-panel,
   .toast,
-  .pane-header {
+  .pane-header,
+  .translation-btn-group,
+  .translation-meta .icon-btn-text {
     display: none !important;
+  }
+
+  /* Hide scrollbars in print */
+  * {
+    scrollbar-width: none !important;
+  }
+
+  *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+
+  /* Translation panel: include in print only when a translation is shown
+     (translationContent keeps its inline display:none when unused) */
+  .translation-panel {
+    display: block !important;
+    background: transparent !important;
+    padding: 1rem 0 !important;
+  }
+
+  .translation-title {
+    color: #000 !important;
+    font-size: 1rem !important;
+  }
+
+  .translation-content {
+    background: transparent !important;
+    border: 1px solid #999 !important;
+    animation: none !important;
+  }
+
+  .lang-tag {
+    color: #000 !important;
+  }
+
+  .translation-box {
+    color: #000 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    page-break-inside: auto;
   }
 
   .print-header {
@@ -1121,6 +1163,15 @@ body {
 
   .pane-right {
     margin-top: 1rem;
+    /* Long transcriptions must flow across pages */
+    page-break-inside: auto !important;
+  }
+
+  .editor-wrapper {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    min-height: 0 !important;
   }
 
   .kannada-textarea {
@@ -1129,9 +1180,37 @@ body {
     padding: 0 !important;
     white-space: pre-wrap !important;
     height: auto !important;
+    max-height: none !important;
     overflow: visible !important;
     font-family: var(--font-kannada) !important;
     line-height: 2 !important;
+    /* Chrome/Firefox print only the visible slice of a <textarea>, no matter
+       the overflow/height. Hide it and print the mirrored full-text layer
+       (.search-backdrop) instead, which carries the same content. */
+    display: none !important;
+  }
+
+  .search-backdrop {
+    position: static !important;
+    inset: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    border: none !important;
+    font-family: var(--font-kannada) !important;
+    font-size: 1.1rem !important;
+    line-height: 2 !important;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+    page-break-inside: auto;
+  }
+
+  .search-backdrop mark {
+    color: #000000 !important;
+    background: none !important;
+    border: none !important;
   }
 
   .editor-meta-bar {
