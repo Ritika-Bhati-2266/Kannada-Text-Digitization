@@ -167,6 +167,62 @@ def illegible_ratio(text: str) -> float:
     return (markers / tokens) if tokens else 0.0
 
 # ==============================================================================
+# Optional low-confidence Latin cleanup — Tesseract path only, OFF by default
+# kan+eng sometimes emits a short Latin word where Kannada was printed
+# ("ritdosh", "Paden", "sic"). With LATIN_CLEANUP=true, each such word's box is
+# re-OCR'd with lang="kan" psm 7 and swapped in only if that returns Kannada.
+# Never touched: words with digits (ED-2026-KN-0492/SAMPLE), ALL-CAPS acronyms
+# (PDO, AUTHORITY, KTBS), and words with conf >= LATIN_MIN_CONF (default 80).
+# Nothing is ever dropped — no Kannada result means the original word stays.
+# ==============================================================================
+LATIN_JUNK_PUNCT = "\"'()[]{},.;:!?…"
+KANNADA_CP_START = 0x0C80
+KANNADA_CP_END = 0x0CFF
+
+def latin_cleanup_enabled() -> bool:
+    """LATIN_CLEANUP env flag — default false, so behaviour is unchanged."""
+    return os.getenv("LATIN_CLEANUP", "false").strip().lower() in ("1", "true", "yes", "on")
+
+def latin_min_conf() -> float:
+    """LATIN_MIN_CONF env (default 80): only Latin words below this confidence are re-OCR'd."""
+    try:
+        return float(os.getenv("LATIN_MIN_CONF", "80"))
+    except (TypeError, ValueError):
+        return 80.0
+
+def is_latin_junk_candidate(word: str) -> bool:
+    """Pure ASCII letters (+ internal hyphen), no digits, not an ALL-CAPS acronym."""
+    w = (word or "").strip()
+    if not w:
+        return False
+    core = w.strip(LATIN_JUNK_PUNCT)
+    if not core or not core.isascii():
+        return False
+    letters = core.replace("-", "")
+    if not letters.isalpha():      # digits / codes / mixed alnum -> untouched
+        return False
+    if letters.isupper():          # acronyms: PDO, AUTHORITY, KTBS, SAMPLE
+        return False
+    return True
+
+def has_kannada_chars(text: str) -> bool:
+    return any(KANNADA_CP_START <= ord(ch) <= KANNADA_CP_END for ch in text)
+
+def find_word_occurrence(text: str, token: str, start: int = 0) -> Optional[int]:
+    """Index of `token` at/after `start`, not glued to other ASCII letters/digits."""
+    idx = text.find(token, start)
+    while idx != -1:
+        before = text[idx - 1] if idx > 0 else ""
+        after_i = idx + len(token)
+        after = text[after_i] if after_i < len(text) else ""
+        before_ok = not (before.isascii() and before.isalnum())
+        after_ok = not (after.isascii() and after.isalnum())
+        if before_ok and after_ok:
+            return idx
+        idx = text.find(token, idx + 1)
+    return None
+
+# ==============================================================================
 # OCR Input Preprocessing: upscale + horizontal strip splitting
 # ==============================================================================
 
@@ -879,6 +935,100 @@ class TesseractEngine(BaseOCREngine):
         # invert back so glyphs are dark on light
         return self.cv2.bitwise_not(thresh)
 
+    def _reocr_latin_word(self, image: Image.Image, data: Dict[str, Any], index: int) -> Optional[str]:
+        """Crop one word box from image_to_data and re-OCR it with lang="kan" psm 7.
+        Returns the Kannada word, or None when nothing usable came back."""
+        # preprocessing returns an OpenCV ndarray; crops need a PIL image
+        if not isinstance(image, Image.Image):
+            image = Image.fromarray(image)
+        try:
+            left = int(data["left"][index])
+            top = int(data["top"][index])
+            width = int(data["width"][index])
+            height = int(data["height"][index])
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
+        if width <= 0 or height <= 0:
+            return None
+
+        pad = max(2, min(width, height) // 4)
+        box = (
+            max(0, left - pad),
+            max(0, top - pad),
+            min(image.width, left + width + pad),
+            min(image.height, top + height + pad),
+        )
+        if box[2] <= box[0] or box[3] <= box[1]:
+            return None
+
+        try:
+            raw = self.pytesseract.image_to_string(
+                image.crop(box), lang="kan", config="--oem 1 --psm 7"
+            )
+        except Exception:
+            return None
+
+        lines = [ln.strip() for ln in strip_zero_width_joiners(raw).splitlines() if ln.strip()]
+        candidate = lines[0] if lines else ""
+        if not candidate or not has_kannada_chars(candidate):
+            return None
+        return candidate
+
+    def _apply_latin_cleanup(self, image: Image.Image, text: str, config: str) -> str:
+        """LATIN_CLEANUP=true (Tesseract only): re-OCR low-confidence pure-Latin
+        words with lang="kan" and swap in the Kannada result. Word order, line
+        breaks and all other spacing come from `text` untouched; a word whose
+        re-OCR returns no Kannada is kept exactly as it was."""
+        if not text.strip():
+            return text
+
+        # preprocessing returns an OpenCV ndarray — image_to_data/crops take PIL
+        if not isinstance(image, Image.Image):
+            image = Image.fromarray(image)
+
+        try:
+            data = self.pytesseract.image_to_data(
+                image, lang=TESSERACT_LANG, config=config,
+                output_type=self.pytesseract.Output.DICT
+            )
+        except Exception:
+            return text
+
+        texts = data.get("text") or []
+        confs = data.get("conf") or []
+        min_conf = latin_min_conf()
+
+        replacements = []  # in reading order: (Latin token, Kannada word)
+        for i, token in enumerate(texts):
+            token = (token or "").strip()
+            if not token:
+                continue
+            try:
+                conf = float(confs[i])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if conf < 0 or conf >= min_conf:
+                continue
+            if not is_latin_junk_candidate(token):
+                continue
+            replacement = self._reocr_latin_word(image, data, i)
+            if replacement and replacement != token:
+                replacements.append((token, replacement))
+
+        if not replacements:
+            return text
+
+        out, cursor = [], 0
+        for token, replacement in replacements:
+            idx = find_word_occurrence(text, token, cursor)
+            if idx is None:
+                continue
+            out.append(text[cursor:idx])
+            out.append(replacement)
+            cursor = idx + len(token)
+        out.append(text[cursor:])
+        return "".join(out)
+
     def extract_text(self, image_bytes: bytes, psm: Optional[int] = None, handwriting: bool = False) -> Dict[str, Any]:
         ready = self.check_ready()
         if not ready["ready"]:
@@ -910,13 +1060,13 @@ class TesseractEngine(BaseOCREngine):
                 except Exception:
                     pass
                 mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
-                return clean, stats, mean_conf
+                return clean, stats, mean_conf, processed_img
 
             def _run_ocr_fast(processed_img):
                 # OCR_FAST_MODE: single image_to_string call, no confidence pass
                 raw = self.pytesseract.image_to_string(processed_img, lang=TESSERACT_LANG, config=custom_config)
                 clean = strip_zero_width_joiners(raw.strip())
-                return clean, analyze_script_distribution(clean)
+                return clean, analyze_script_distribution(clean), processed_img
 
             if handwriting:
                 # Run BOTH pipelines; pick by Tesseract mean word-confidence —
@@ -924,19 +1074,19 @@ class TesseractEngine(BaseOCREngine):
                 candidates = []
                 for label, prep in (("handwriting", self._preprocess_handwriting), ("print", self._preprocess_image)):
                     try:
-                        text, stats, conf = _run_ocr(prep(image_bytes))
-                        candidates.append((label, text, stats, conf))
+                        text, stats, conf, prep_img = _run_ocr(prep(image_bytes))
+                        candidates.append((label, text, stats, conf, prep_img))
                     except Exception as prep_err:
                         print(f"[TesseractEngine] {label} preprocessing failed: {prep_err}")
                 if not candidates:
                     raise ValueError("All preprocessing pipelines failed.")
                 # Highest mean confidence wins; require some text to exist
                 candidates.sort(key=lambda c: (c[3] if c[1].strip() else -1.0), reverse=True)
-                mode_label, clean_text, script_stats, _conf = candidates[0]
+                mode_label, clean_text, script_stats, _conf, prep_img = candidates[0]
                 model_suffix = f"psm {psm_value} ({mode_label})"
             elif self.fast_mode:
                 # OCR_FAST_MODE: single Otsu pipeline, one image_to_string, no confidence pick
-                clean_text, script_stats = _run_ocr_fast(self._preprocess_image(image_bytes))
+                clean_text, script_stats, prep_img = _run_ocr_fast(self._preprocess_image(image_bytes))
                 model_suffix = f"psm {psm_value} (print-fast)"
             else:
                 # Multi-variant print mode: standard Otsu + real-world (CLAHE/adaptive/deskew).
@@ -945,15 +1095,22 @@ class TesseractEngine(BaseOCREngine):
                 candidates = []
                 for label, prep in (("print", self._preprocess_image), ("realworld", self._preprocess_realworld)):
                     try:
-                        text, stats, conf = _run_ocr(prep(image_bytes))
-                        candidates.append((label, text, stats, conf))
+                        text, stats, conf, prep_img = _run_ocr(prep(image_bytes))
+                        candidates.append((label, text, stats, conf, prep_img))
                     except Exception as prep_err:
                         print(f"[TesseractEngine] {label} preprocessing failed: {prep_err}")
                 if not candidates:
                     raise ValueError("All preprocessing pipelines failed.")
                 candidates.sort(key=lambda c: (c[3] if c[1].strip() else -1.0), reverse=True)
-                mode_label, clean_text, script_stats, _conf = candidates[0]
+                mode_label, clean_text, script_stats, _conf, prep_img = candidates[0]
                 model_suffix = f"psm {psm_value} ({mode_label})"
+
+            # Opt-in Latin cleanup (LATIN_CLEANUP=true) on the winning pipeline's image
+            if latin_cleanup_enabled() and prep_img is not None:
+                cleaned = self._apply_latin_cleanup(prep_img, clean_text, custom_config)
+                if cleaned != clean_text:
+                    clean_text = cleaned
+                    script_stats = analyze_script_distribution(clean_text)
 
             word_count, char_count = count_words_and_chars(clean_text)
 
