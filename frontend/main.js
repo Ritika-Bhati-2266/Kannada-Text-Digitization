@@ -37,6 +37,7 @@ const elements = {
   uploadBtn: document.getElementById('uploadBtn'),
   cameraBtn: document.getElementById('cameraBtn'),
   handwritingModeToggle: document.getElementById('handwritingModeToggle'),
+  handwritingHintBtn: document.getElementById('handwritingHintBtn'),
   samplePills: document.querySelectorAll('.sample-pill'),
 
   // Alerts & Banners
@@ -229,6 +230,13 @@ function bindEvents() {
     if (state.currentFile && !state.isOcrLoading) {
       triggerOcrExtraction(state.currentFile);
     }
+  });
+
+  // Handwriting mode hint (tap/click shows the full note — title alone is unreliable on touch)
+  elements.handwritingHintBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showToast(elements.handwritingHintBtn.getAttribute('title') || '');
   });
 
   // Image Zoom Controls
@@ -584,11 +592,39 @@ function updateCounters(words, chars) {
   if (words !== undefined && chars !== undefined) {
     elements.wordCountDisplay.textContent = words;
     elements.charCountDisplay.textContent = chars;
+    updateActionStates();
     return;
   }
   const cleanWords = text.trim() ? text.trim().split(/\s+/).length : 0;
   elements.wordCountDisplay.textContent = cleanWords;
   elements.charCountDisplay.textContent = text.length;
+  updateActionStates();
+}
+
+// ==============================================================================
+// 6b. Action Button Enable / Disable (empty editor → no actions)
+// ==============================================================================
+// Text actions need non-whitespace text in the editor. Print / PDF only needs
+// something to print: a loaded document OR text. Called from updateCounters so
+// every path that changes the editor (input event, OCR result, sample load,
+// library load) re-checks. OCR-in-progress locking is untouched (setOcrControlsLocked).
+function updateActionStates() {
+  const hasText = elements.kannadaEditor.value.trim().length > 0;
+  const hasDoc = Boolean(state.currentFile || state.currentFileName);
+
+  setActionEnabled(elements.readAloudBtn, hasText);
+  setActionEnabled(elements.copyTextBtn, hasText);
+  setActionEnabled(elements.exportTxtBtn, hasText);
+  setActionEnabled(elements.transliterateBtn, hasText);
+  setActionEnabled(elements.translateEnBtn, hasText);
+  setActionEnabled(elements.translateHiBtn, hasText);
+  setActionEnabled(elements.printPdfBtn, hasText || hasDoc);
+}
+
+function setActionEnabled(btn, enabled) {
+  if (!btn) return;
+  btn.disabled = !enabled;
+  btn.setAttribute('aria-disabled', String(!enabled));
 }
 
 // ==============================================================================

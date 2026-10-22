@@ -184,8 +184,15 @@ body {
   white-space: nowrap;
 }
 
-.btn:active {
+.btn:not(:disabled):active {
   transform: scale(0.98);
+}
+
+/* Disabled actions (empty editor / no document): muted, no hover, not clickable */
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-primary {
@@ -195,7 +202,7 @@ body {
   box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
 }
 
-.btn-primary:hover {
+.btn-primary:not(:disabled):hover {
   background: linear-gradient(135deg, #fbbf24 0%, var(--accent-gold) 100%);
   box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
 }
@@ -206,7 +213,7 @@ body {
   border-color: var(--border-subtle);
 }
 
-.btn-secondary:hover {
+.btn-secondary:not(:disabled):hover {
   background: #334155;
   border-color: rgba(255, 255, 255, 0.2);
 }
@@ -217,7 +224,7 @@ body {
   border-color: rgba(6, 182, 212, 0.35);
 }
 
-.btn-accent:hover {
+.btn-accent:not(:disabled):hover {
   background: rgba(6, 182, 212, 0.25);
   border-color: rgba(6, 182, 212, 0.5);
   color: #7dd3fc;
@@ -229,7 +236,7 @@ body {
   border-color: var(--border-subtle);
 }
 
-.btn-outline:hover {
+.btn-outline:not(:disabled):hover {
   color: var(--text-main);
   border-color: var(--text-muted);
   background: rgba(255, 255, 255, 0.05);
@@ -240,7 +247,7 @@ body {
   color: #1e1b4b;
 }
 
-.btn-warning:hover {
+.btn-warning:not(:disabled):hover {
   background: #fbbf24;
 }
 
@@ -429,6 +436,33 @@ body {
 
 .handwriting-toggle input:checked ~ .toggle-label {
   color: #f59e0b;
+}
+
+/* "?" hint beside the handwriting toggle — tap/click shows the full note on touch */
+.handwriting-hint {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.handwriting-hint:hover,
+.handwriting-hint:focus-visible {
+  color: var(--text-main);
+  border-color: var(--text-muted);
+  outline: none;
 }
 
 .samples-picker-group {
@@ -634,6 +668,21 @@ body {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
+  color: var(--text-dim);
+}
+
+/* Small muted notes under the format chips */
+.dropzone-notes {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.dropzone-notes p {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
   color: var(--text-dim);
 }
 
@@ -1513,6 +1562,13 @@ body {
   .handwriting-toggle {
     min-height: 44px;
     padding: 0.25rem 0;
+  }
+
+  /* Bigger tap target for the "?" hint on touch screens */
+  .handwriting-hint {
+    min-width: 32px;
+    min-height: 32px;
+    font-size: 0.85rem;
   }
 
   .samples-picker-group {
