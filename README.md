@@ -129,7 +129,7 @@ FastAPI backend  ──►  UnifiedOCRManager
 - **Export** — copy, download `.txt`, print / save as PDF with a formatted digital-copy header
 - **Rate-limit UX** — 429 detection, bilingual alert banner, countdown, one-click retry
 - **PWA (installable)** — web-app manifest + service worker: the app shell caches for offline launch; **`/api/*` responses are never cached**, and OCR still requires the backend
-- **Privacy by default** — images are processed in memory and are stored **only** if you opt in with `ENABLE_ARCHIVE=true`. The dropzone states where text goes: *"Read Aloud uses the browser voice first; otherwise text goes to Google (gTTS). Translation text goes to Groq API."* (measured in Job 1: 5 browser voices, 0 Kannada → `POST /api/tts` → Google — see §11)
+- **Privacy by default** — images are processed in memory and are stored **only** if you opt in with `ENABLE_ARCHIVE=true`. The dropzone states where text goes: *"Read Aloud uses the browser voice first; otherwise text goes to Google (gTTS). Translation text goes to Groq API."* (headless Chromium test had 0 Kannada voices; real browsers vary. Fallback is gTTS (Google) — 5 voices total, see §11)
 
 ## 7. Repository Structure
 
@@ -238,7 +238,7 @@ Non-Docker alternative: any Python host (Railway, Hugging Face Spaces, PythonAny
 
 **Test set: 4 images, all synthetic.** Every PNG in `samples/` was rendered by our own generator scripts (`create_samples.py`, `create_handwriting_sample.py`) from known Kannada text. There are **zero real photographs, scans, or real handwriting** in this set — `sample_handwriting.png` is **simulated** pen-stroke rendering, not a photo of handwriting. Four documents is a **small test set**; these numbers are not a claim of production accuracy on arbitrary Karnataka government circulars, land records, or manuscripts.
 
-**Real phone handwriting photo:** tested manually, output readable with errors, no CER measured.
+**One real phone photo of ruled handwriting:** first run (toggle off) gave unusable noise (880 words / 3214 chars for ~124 words); later run readable with many errors. No CER. Clean screenshots not same as phone photos.
 
 **Metric: CER only, against ground-truth text files.** Reproduce with `python backend/compare_engines.py`. **CER** (character error rate) = Levenshtein distance over characters divided by reference length, computed **only** against the matching `samples/<name>.txt` (zero-width joiners stripped, whitespace collapsed). Lower is better; `0.00%` = exact match. No word-accuracy, no subjective scoring, no cherry-picked images. Failed or rate-limited runs are shown as failures, not omitted.
 
@@ -247,18 +247,18 @@ Non-Docker alternative: any Python host (Railway, Hugging Face Spaces, PythonAny
 | `sample_circular.png` *(generated)* | 52.35% (50.58s) | 15.92% (5.52s) | **15.80%** (5.75s) |
 | `sample_handwriting.png` *(simulated, not real handwriting)* | 47.06% (12.27s) | **15.44%** (2.05s) | 17.65% (2.05s) |
 | `sample_notice.png` *(generated)* | 50.27% (91.59s) | 18.65% (5.44s) | **17.84%** (6.24s) |
-| `sample_textbook.png` *(generated)* | 56.50% (77.4s) † | **12.00%** (6.43s) | 12.62% (6.29s) |
+| `sample_textbook.png` *(generated)* | 56.50% (49.0s) † | **12.00%** (6.43s) | 12.62% (6.29s) |
 
-**Benchmark run (Job 5, this run, `GROQ: READY` — no 401s):** every Groq document went through repeated `429` rate-limit backoffs. The row marked † **FAILED in that run** — `chat/completions failed after 25.4s` / *"Groq did not respond in 25s, try again or check the key."* after 105.42s of retries — and its `56.50% (77.4s)` comes from a follow-up run of the same image, in which the other three Groq samples failed the same way (circular / notice / handwriting: `429` → backoff → 25s timeout). Failures are recorded as failures, not omitted or back-filled. Groq here is `qwen/qwen3.8-27b`. On these generated samples the offline default is both more accurate and far faster, which is why Tesseract is the default and Groq stays optional.
+**Measured 22 Oct 2026, local, Tesseract 5.5.3 — the Groq rows come from separate runs**, because every Groq document hit repeated `429` rate-limit backoffs: circular, handwriting and notice are from one run; the textbook row (†) is from a later re-run of the same image, which succeeded at **56.50% (49.0s)** after the benchmark attempt failed — `chat/completions failed after 25.4s` / *"Groq did not respond in 25s, try again or check the key."* Failures are recorded as failures, not omitted or back-filled. Groq here is `qwen/qwen3.8-27b`. On these generated samples the offline default is both more accurate and far faster, which is why Tesseract is the default and Groq stays optional.
 
-**Hallucinated lines (Job 5):** every successful Groq output contains lines that are **not in the image** — verified absent from the matching ground-truth `.txt`:
+**Hallucinated lines (measured 22 Oct 2026):** every successful Groq output contains lines that are **not in the image** — verified absent from the matching ground-truth `.txt`:
 
 - *notice:* `ಗ್ರಾಮೀಣ ವಲಯದಲ್ಲಿ ವ್ಯಾಪಕವಾಗಿ ಸಮಸ್ಯೆ ಸೃಷ್ಟಿಸಲಾಗಿದೆ.` · `…೧೦ ಜನರು ಸಾವನ್ನಪ್ಪಿದ್ದಾರೆ.` (an invented casualty count) · `ಅಧ್ಯಕ್ಷರಾದ ಗೌರವಮಾನ್ಯರು ದ್ವಾರಕೆ ೨೬-೦೦-೨೦೨೬ ರಂದು…`
 - *circular:* `ಸರ್ಕಾರದ ಅನುಮೋದನೆ ಕಟ್ಟುವಿಕೆಗಳ ಮೇಲೆ ಸಿಬ್ಬಂದಿ.` · `ಸೂಕ್ತಾದ ಅಧಿಕಾರದಾರಿ ಕಚೇರಿಯವರ ಮೂಲಕ ಸಲ್ಲಿಸಲಾಗುತ್ತದೆ.`
 - *textbook:* `ಕಾಗಳು ಜ್ಞಾನವೇದೀಶ ಬ್ರಹ್ಮಶ್ರೀ ಮುದ್ದನಾಥ ಮಹಾಶ್ರೀ.` · `ಮೇಲಿನವರೇ ಹೊರತು ಮೊದಲ, ತೂರಾ ನರೇರಾ ಹೇರೆಯ ಮಹಾತ್ಮ` · `ನೀವು ಉತ್ತರಿಸಲಾಗಿದೆ.` · and the wrong print year `೨೦೨೪` (the image says `೨೦೨೬`)
 - *handwriting:* no line fell below the 0.45 line-match threshold against ground truth (Groq returned only 7 lines there)
 
-**Optional Latin-junk cleanup — measured (Job 4, this run):** `LATIN_CLEANUP=true` vs the default-off baseline (the Tesseract columns above). Gate: no sample may worsen by more than **1.00 pp** — result **PASS**, every row improved.
+**Optional Latin-junk cleanup — measured 22 Oct 2026, local, Tesseract 5.5.3:** `LATIN_CLEANUP=true` vs the default-off baseline (the Tesseract columns above). Gate: no sample may worsen by more than **1.00 pp** — result **PASS**, every row improved. The cleanup was tuned and tested on the same 4 samples.
 
 | Image | psm 4 baseline → with cleanup | psm 6 baseline → with cleanup |
 |---|---|---|
@@ -269,14 +269,14 @@ Non-Docker alternative: any Python host (Railway, Hugging Face Spaces, PythonAny
 
 Worst change: **+0.00 pp**. Protected strings survived verbatim in the after-texts: `PDO`, `AUTHORITY`, `ED-2026-KN-0492/SAMPLE`, `GP-SRP-2026-NOTICE/SAMPLE`, `KTBS`. The Latin tokens that disappeared: `ritdosh`, `vara}`, `cea?`, `sid` (notice), `Paden`, `Sota:`, `Tow.`, `Hawes`, `sic` (textbook), `Beis` (handwriting) — replaced by Kannada tokens such as `ನ್ಸರ್ಗ`, `ವರ್ಷ:`, `ಮಲೆನಾಡ್ನ`, `ಜೆಳ್ಗಗೆ`. The flag ships **off**: with `LATIN_CLEANUP` unset, all three printed samples re-ran **byte-identical** to the baseline above.
 
-**Browser end-to-end checks — measured (Job 1, this run):**
+**Browser end-to-end checks — measured 22 Oct 2026, local, Tesseract 5.5.3:**
 
 - **Multi-page PDF:** a 2-page PDF OCR'd in **12 s** in the UI (**11 s** at the API), `page_count: 2`, page markers `—— ಪುಟ / Page 1 ——` and `—— ಪುಟ / Page 2 ——` present
 - **English-only image:** clean English text (379 chars) plus the banner *"Script Validation Warning: Almost no Kannada script detected (0.0%)"*
 - **Forced 500** (Playwright route interception): error banner shown, empty editor → all **7** action buttons disabled; text present → all **7** enabled; sample pills unlocked again — **PASS, no FAILs** (gating in `frontend/main.js:611-622`)
 - **Engine label with and without a key:** identical — badge `TESSERACT: READY`, meta `TESSERACT (tesseract-kan (psm 6 (print)))`; decided by `OCR_ENGINE` (`ocr_service.py:1160` `get_configured_engine_name()`, `main.py:84`)
 - **TXT export:** `kannada_document_transcription.txt` — 104 bytes = UTF-8 BOM (`EF BB BF`) + content, valid UTF-8, zero-width joiners and Latin digits intact, exact match with the editor text
-- **Read Aloud data path:** the browser exposed 5 speech voices, **0 Kannada** → `POST /api/tts` returned 200 `audio/mpeg` → the text reached **Google** (`main.py:359` `gTTS(lang="kn")`, `main.js:876`, `main.js:909`)
+- **Read Aloud data path:** the headless Chromium test had **0 Kannada voices** (5 voices total) — real browsers vary → `POST /api/tts` returned 200 `audio/mpeg` → the text reached **Google** (`main.py:359` `gTTS(lang="kn")`, `main.js:876`, `main.js:909`)
 - **Privacy default:** images are processed in memory and are not stored unless `ENABLE_ARCHIVE=true`
 
 **About the numbers above:** OCR now runs Tesseract with `lang="kan+eng"` (bug fix — `kan` alone mangled Latin codes like `ED-2026-KN-0492/SAMPLE`). Tesseract latencies are higher than in single-pipeline runs because print mode runs **both** preprocessing variants and keeps the higher-confidence result (confidence is not accuracy — see §6).
@@ -285,7 +285,7 @@ Worst change: **+0.00 pp**. Protected strings survived verbatim in the after-tex
 
 ## 12. Limitations & Future Scope
 
-**Limitations:** the built-in handwriting sample is **simulated handwriting generated by script, not a real pen-on-paper photo** — the handwriting mode is **experimental**: it was tested only on that one simulated sample (where Tesseract's confidence picker selected the print pipeline, producing the same output as print mode). Tesseract `kan` is trained on printed text; no real-handwriting accuracy has been measured or claimed — a real phone handwriting photo was tested manually, output readable with errors, no CER measured. gTTS needs internet; free-tier Groq quotas can throttle or fail heavy use (the UI surfaces this clearly — Job 5 hit repeated `429` backoffs and one 25 s timeout — and OCR keeps working offline). Translation is LLM-generated and can smooth over OCR errors or guess missing words; English and Hindi output can differ for the same text; verify against the original. `kan+eng` fixes Latin codes and digits but occasionally replaces a Kannada word with short English junk (e.g. 'asta', 'Assit'; this run: `ritdosh`, `Paden`, `sic`); review the text in the editable pane, or enable the opt-in `LATIN_CLEANUP` (default `false`), which measured −0.25 to −3.68 pp CER on all four samples with no sample worsening (§11).
+**Limitations:** the built-in handwriting sample is **simulated handwriting generated by script, not a real pen-on-paper photo** — the handwriting mode is **experimental**: it was tested only on that one simulated sample (where Tesseract's confidence picker selected the print pipeline, producing the same output as print mode). Tesseract `kan` is trained on printed text; no real-handwriting accuracy has been measured or claimed — one real phone photo of ruled handwriting was tested manually (readable with many errors, no CER measured; see §11). gTTS needs internet; free-tier Groq quotas can throttle or fail heavy use (the UI surfaces this clearly — benchmark runs on 22 Oct 2026 hit repeated `429` backoffs and one 25 s timeout — and OCR keeps working offline). Translation is LLM-generated and can smooth over OCR errors or guess missing words; English and Hindi output can differ for the same text; verify against the original. `kan+eng` fixes Latin codes and digits but occasionally replaces a Kannada word with short English junk (e.g. 'asta', 'Assit'; measured 22 Oct 2026: `ritdosh`, `Paden`, `sic`); review the text in the editable pane, or enable the opt-in `LATIN_CLEANUP` (default `false`), which measured −0.25 to −3.68 pp CER on all four samples with no sample worsening (§11).
 
 **Future scope:** batch PDF ingestion with page-wise OCR, multi-dialect phrase bank for PS-04 crossover, screen-reader-optimized accessibility mode, evaluation of on-device models for real handwriting (beyond today's simulated sample), and measuring the two preprocessing variants against real photos/scans (today they are picked by Tesseract confidence only, which is not accuracy).
 
