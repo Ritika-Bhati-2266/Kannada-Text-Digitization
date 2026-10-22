@@ -1,7 +1,7 @@
 /* Kannada Lipi Mitra — minimal offline-first service worker.
    Caches static shell only. /api/* is NEVER cached — API responses always
    go straight to the network (and are never served from cache). */
-const CACHE = 'lipi-mitra-v2';
+const CACHE = 'lipi-mitra-v3';
 const STATIC_ASSETS = [
   './',
   './index.html',
